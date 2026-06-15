@@ -1,0 +1,101 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: client
+  labels:
+    app: client
+    {{- include "showcase.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.client.replicas }}
+  selector:
+    matchLabels:
+      app: client
+  template:
+    metadata:
+      labels:
+        app: client
+    spec:
+      containers:
+        - name: client
+          image: {{ .Values.image.registry }}/{{ .Values.client.image.name }}:{{ .Values.image.tag }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            - { name: MICROSERVICE_A_URL, value: {{ .Values.client.env.microserviceAUrl | quote }} }
+            - { name: REQUEST_RATE, value: {{ .Values.client.env.requestRate | quote }} }
+            - { name: PRIME_N, value: {{ .Values.client.env.primeN | quote }} }
+          resources:
+            {{- toYaml .Values.client.resources | nindent 12 }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: microservice-a
+  labels:
+    app: microservice-a
+    {{- include "showcase.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.microserviceA.replicas }}
+  selector:
+    matchLabels:
+      app: microservice-a
+  template:
+    metadata:
+      labels:
+        app: microservice-a
+    spec:
+      containers:
+        - name: microservice-a
+          image: {{ .Values.image.registry }}/{{ .Values.microserviceA.image.name }}:{{ .Values.image.tag }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - { containerPort: {{ .Values.microserviceA.env.port }}, name: http }
+          env:
+            - { name: PORT, value: {{ .Values.microserviceA.env.port | quote }} }
+            - { name: MICROSERVICE_B_URL, value: {{ .Values.microserviceA.env.microserviceBUrl | quote }} }
+            - { name: MAX_QUEUE_SIZE, value: {{ .Values.microserviceA.env.maxQueueSize | quote }} }
+          readinessProbe:
+            httpGet: { path: /health, port: {{ .Values.microserviceA.env.port }} }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /health, port: {{ .Values.microserviceA.env.port }} }
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          resources:
+            {{- toYaml .Values.microserviceA.resources | nindent 12 }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: microservice-b
+  labels:
+    app: microservice-b
+    {{- include "showcase.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.microserviceB.replicas }}
+  selector:
+    matchLabels:
+      app: microservice-b
+  template:
+    metadata:
+      labels:
+        app: microservice-b
+    spec:
+      containers:
+        - name: microservice-b
+          image: {{ .Values.image.registry }}/{{ .Values.microserviceB.image.name }}:{{ .Values.image.tag }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - { containerPort: {{ .Values.microserviceB.env.port }}, name: http }
+          env:
+            - { name: PORT, value: {{ .Values.microserviceB.env.port | quote }} }
+          readinessProbe:
+            httpGet: { path: /health, port: {{ .Values.microserviceB.env.port }} }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /health, port: {{ .Values.microserviceB.env.port }} }
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          resources:
+            {{- toYaml .Values.microserviceB.resources | nindent 12 }}

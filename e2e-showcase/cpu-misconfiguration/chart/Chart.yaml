@@ -1,0 +1,4 @@
+apiVersion: v2
+name: cpu-misconfiguration-showcase
+version: 0.1.0
+description: E2E showcase - CPU misconfiguration detection via log-based alerting

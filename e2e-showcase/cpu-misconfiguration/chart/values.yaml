@@ -1,0 +1,56 @@
+image:
+  registry: quay.io/rh-ai-quickstart
+  tag: "0.1.0"
+  pullPolicy: IfNotPresent
+
+client:
+  replicas: 1
+  image:
+    name: showcase-client
+  env:
+    primeN: 30000
+    requestRate: "2.0"
+    microserviceAUrl: "http://microservice-a:8080"
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 100m
+      memory: 128Mi
+
+microserviceA:
+  replicas: 1
+  image:
+    name: showcase-microservice-a
+  env:
+    port: 8080
+    maxQueueSize: 100
+    microserviceBUrl: "http://microservice-b:8080"
+  service:
+    port: 8080
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
+
+microserviceB:
+  replicas: 1
+  image:
+    name: showcase-microservice-b
+  env:
+    port: 8080
+  service:
+    port: 8080
+  # BUG: CPU should be 200m,250m, not 20m,25m. This misconfiguration causes CPU
+  # starvation, leading to slow processing and queue buildup upstream.
+  resources:
+    requests:
+      cpu: 20m
+      memory: 128Mi
+    limits:
+      cpu: 25m
+      memory: 256Mi

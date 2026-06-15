@@ -1,0 +1,27 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: microservice-a
+  labels:
+    app: microservice-a
+    {{- include "showcase.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    app: microservice-a
+  ports:
+    - { port: {{ .Values.microserviceA.service.port }}, targetPort: {{ .Values.microserviceA.env.port }}, name: http }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: microservice-b
+  labels:
+    app: microservice-b
+    {{- include "showcase.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    app: microservice-b
+  ports:
+    - { port: {{ .Values.microserviceB.service.port }}, targetPort: {{ .Values.microserviceB.env.port }}, name: http }
