@@ -19,6 +19,7 @@ EXPECTED_TOOLS = {
     "consume_topic",
     "produce_message",
     "get_consumer_lag",
+    "clear_dedup_cache",
 }
 
 
@@ -82,6 +83,116 @@ class TestProduceConsumeRoundTrip:
 
         values = [m["value"] for m in consume_result["messages"]]
         assert any(v.get("test_id") == test_id for v in values if isinstance(v, dict))
+
+
+class TestDedup:
+    @pytest.fixture(autouse=True)
+    def _clear_cache(self, mcp_kafka_client):
+        mcp_call(mcp_kafka_client, "clear_dedup_cache")
+        yield
+        mcp_call(mcp_kafka_client, "clear_dedup_cache")
+
+    def test_duplicate_alerting_dropped(self, mcp_kafka_client, seeded_topic):
+        alert = {
+            "incident_key": f"dedup-{uuid.uuid4().hex[:8]}",
+            "alert_state": "alerting",
+            "description": "integration test alert",
+        }
+
+        mcp_call(mcp_kafka_client, "produce_message",
+                 {"topic": seeded_topic, "message": alert})
+        first = mcp_call(mcp_kafka_client, "consume_topic",
+                         {"topic": seeded_topic, "max_messages": 50, "timeout_ms": 10000})
+        alerting_msgs = [
+            m for m in first["messages"]
+            if isinstance(m["value"], dict)
+            and m["value"].get("incident_key") == alert["incident_key"]
+        ]
+        assert len(alerting_msgs) == 1
+
+        mcp_call(mcp_kafka_client, "produce_message",
+                 {"topic": seeded_topic, "message": alert})
+        second = mcp_call(mcp_kafka_client, "consume_topic",
+                          {"topic": seeded_topic, "max_messages": 50, "timeout_ms": 10000})
+        dup_msgs = [
+            m for m in second["messages"]
+            if isinstance(m["value"], dict)
+            and m["value"].get("incident_key") == alert["incident_key"]
+        ]
+        assert len(dup_msgs) == 0
+
+    def test_resolved_clears_then_realerts(self, mcp_kafka_client, seeded_topic):
+        key = f"dedup-{uuid.uuid4().hex[:8]}"
+        alert = {"incident_key": key, "alert_state": "alerting", "description": "fire"}
+        resolved = {"incident_key": key, "alert_state": "ok", "description": "resolved"}
+
+        mcp_call(mcp_kafka_client, "produce_message",
+                 {"topic": seeded_topic, "message": alert})
+        mcp_call(mcp_kafka_client, "consume_topic",
+                 {"topic": seeded_topic, "max_messages": 50, "timeout_ms": 10000})
+
+        mcp_call(mcp_kafka_client, "produce_message",
+                 {"topic": seeded_topic, "message": resolved})
+        res = mcp_call(mcp_kafka_client, "consume_topic",
+                       {"topic": seeded_topic, "max_messages": 50, "timeout_ms": 10000})
+        resolved_msgs = [
+            m for m in res["messages"]
+            if isinstance(m["value"], dict)
+            and m["value"].get("incident_key") == key
+            and m["value"].get("alert_state") == "ok"
+        ]
+        assert len(resolved_msgs) == 1
+
+        # After resolved cleared the cache, a new alerting message must not
+        # be suppressed.  consume_topic re-reads the topic tail so earlier
+        # messages reappear — we only assert the new alert is present.
+        mcp_call(mcp_kafka_client, "produce_message",
+                 {"topic": seeded_topic, "message": alert})
+        re_alert = mcp_call(mcp_kafka_client, "consume_topic",
+                            {"topic": seeded_topic, "max_messages": 50, "timeout_ms": 10000})
+        re_alert_msgs = [
+            m for m in re_alert["messages"]
+            if isinstance(m["value"], dict)
+            and m["value"].get("incident_key") == key
+            and m["value"].get("alert_state") == "alerting"
+        ]
+        assert len(re_alert_msgs) >= 1
+
+
+class TestClearDedupCache:
+    def test_clear_allows_reconsume(self, mcp_kafka_client, seeded_topic):
+        key = f"dedup-{uuid.uuid4().hex[:8]}"
+        alert = {"incident_key": key, "alert_state": "alerting", "description": "test"}
+
+        mcp_call(mcp_kafka_client, "clear_dedup_cache")
+        mcp_call(mcp_kafka_client, "produce_message",
+                 {"topic": seeded_topic, "message": alert})
+        mcp_call(mcp_kafka_client, "consume_topic",
+                 {"topic": seeded_topic, "max_messages": 50, "timeout_ms": 10000})
+
+        mcp_call(mcp_kafka_client, "produce_message",
+                 {"topic": seeded_topic, "message": alert})
+        dup = mcp_call(mcp_kafka_client, "consume_topic",
+                       {"topic": seeded_topic, "max_messages": 50, "timeout_ms": 10000})
+        dup_msgs = [
+            m for m in dup["messages"]
+            if isinstance(m["value"], dict) and m["value"].get("incident_key") == key
+        ]
+        assert len(dup_msgs) == 0
+
+        result = mcp_call(mcp_kafka_client, "clear_dedup_cache")
+        assert result["success"] is True
+        assert result["cleared"] >= 1
+
+        mcp_call(mcp_kafka_client, "produce_message",
+                 {"topic": seeded_topic, "message": alert})
+        after = mcp_call(mcp_kafka_client, "consume_topic",
+                         {"topic": seeded_topic, "max_messages": 50, "timeout_ms": 10000})
+        after_msgs = [
+            m for m in after["messages"]
+            if isinstance(m["value"], dict) and m["value"].get("incident_key") == key
+        ]
+        assert len(after_msgs) == 1
 
 
 class TestGetConsumerLag:

@@ -13,11 +13,14 @@ Tools:
 Transport: Configurable via MCP_TRANSPORT env var (default: sse)
 """
 
+import logging
 from typing import Any
 
 from starlette.responses import JSONResponse
 
 from .config import MCP_TRANSPORT, mcp
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 
 
 @mcp.custom_route("/health", methods=["GET"])  # type: ignore

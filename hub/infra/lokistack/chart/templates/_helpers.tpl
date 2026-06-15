@@ -69,6 +69,13 @@ Get the Loki gateway base URL.
 {{- end }}
 
 {{/*
+Get the Loki query-frontend URL (direct access, bypasses gateway auth).
+*/}}
+{{- define "lokistack.lokiQueryFrontendUrl" -}}
+{{- printf "https://%s-query-frontend-http.%s.svc:3100" .Values.lokistack.name .Release.Namespace }}
+{{- end }}
+
+{{/*
 Get the OpenShift cluster apps domain from the Ingress config resource.
 Falls back to .Values.clusterDomain when lookup is unavailable (helm template, non-OpenShift).
 */}}

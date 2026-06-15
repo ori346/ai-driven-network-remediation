@@ -1,8 +1,12 @@
 from unittest.mock import MagicMock, patch
 
+import pytest
 from kafka.errors import NoBrokersAvailable
 from kafka.structs import TopicPartition
 from mcp_kafka.tools import (
+    _dedup_messages,
+    _seen_incident_keys,
+    clear_dedup_cache,
     consume_topic,
     get_consumer_lag,
     list_topics,
@@ -218,6 +222,16 @@ class TestGetConsumerLag:
         assert result["success"] is True
         assert result["status"] == "behind"
 
+    def test_topic_not_found(self, mock_consumer_cls, mock_admin_cls):
+        consumer = mock_consumer_cls.return_value
+        consumer.partitions_for_topic.return_value = None
+
+        result = get_consumer_lag()
+
+        assert result["success"] is False
+        assert "not found" in result["message"]
+        consumer.close.assert_called_once()
+
     def test_connection_error(self, mock_consumer_cls, mock_admin_cls):
         mock_consumer_cls.side_effect = NoBrokersAvailable()
 
@@ -225,3 +239,48 @@ class TestGetConsumerLag:
 
         assert result["success"] is False
         assert result["error"] == "connection_error"
+
+
+class TestDedupMessages:
+    @pytest.fixture(autouse=True)
+    def _clear_cache(self):
+        _seen_incident_keys.clear()
+        yield
+        _seen_incident_keys.clear()
+
+    def test_duplicate_alerting_dropped(self):
+        msg = {"value": {"incident_key": "k1", "alert_state": "alerting"}}
+        assert len(_dedup_messages([msg])) == 1
+        assert len(_dedup_messages([msg])) == 0
+
+    def test_resolved_clears_cache(self):
+        alerting = {"value": {"incident_key": "k1", "alert_state": "alerting"}}
+        resolved = {"value": {"incident_key": "k1", "alert_state": "ok"}}
+
+        _dedup_messages([alerting])
+        result = _dedup_messages([resolved])
+        assert len(result) == 1
+
+        result = _dedup_messages([alerting])
+        assert len(result) == 1
+
+
+class TestClearDedupCache:
+    @pytest.fixture(autouse=True)
+    def _clear_cache(self):
+        _seen_incident_keys.clear()
+        yield
+        _seen_incident_keys.clear()
+
+    def test_clears_and_returns_count(self):
+        _seen_incident_keys.update(["a", "b", "c"])
+
+        result = clear_dedup_cache()
+
+        assert result == {"success": True, "cleared": 3}
+        assert len(_seen_incident_keys) == 0
+
+    def test_empty_cache(self):
+        result = clear_dedup_cache()
+
+        assert result == {"success": True, "cleared": 0}

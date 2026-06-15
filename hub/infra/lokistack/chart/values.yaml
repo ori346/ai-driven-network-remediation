@@ -105,7 +105,7 @@ grafana:
       enabled: false
       orgRole: Viewer
 
-  # Loki datasources — authenticated via grafana-loki-reader service account token
+  # Loki datasources — connect directly to query-frontend via mTLS
   # URLs are auto-constructed from lokistack.name and the release namespace
   datasources:
     loki:
@@ -147,14 +147,19 @@ grafana:
       termination: edge
       insecureEdgeTerminationPolicy: Redirect
 
-  # RBAC for Grafana backend to query LokiStack API (separate from UI login above)
-  # These resources are always created when Grafana is enabled (required for LokiStack auth)
+  # Alerting — enables unified alerting and mounts an alerting provisioning directory.
+  # To provision alert rules, create a ConfigMap with your alerting YAML and add
+  # its name to the sources list. Each source is optional so Grafana starts even
+  # if the ConfigMap does not exist yet.
+  alerting:
+    enabled: true
+    sources: []
+
+  # RBAC — Grafana connects directly to the query-frontend via mTLS,
+  # bypassing the LokiStack gateway (which requires OpenShift OAuth).
   rbac:
     serviceAccount:
       name: grafana
-    # ServiceAccount used to authenticate datasource requests to LokiStack
-    lokiReader:
-      serviceAccountName: grafana-loki-reader
 
 # MCP LokiStack reader RBAC (ServiceAccount + RoleBindings + token Secret)
 mcpLokistack:

@@ -38,6 +38,7 @@ LANGFUSE_PORT          := 3000
 # ── Kafka (optional: ENABLE_KAFKA=true) ─────────────────────────
 ENABLE_KAFKA           ?= true
 ENABLE_KAFKA_UI        ?= false
+ENABLE_KAFKA_REST      ?= $(ENABLE_KAFKA)
 KAFKA_RELEASE          := kafka
 KAFKA_VALUES           := hub/infra/kafka/values.yaml
 KAFKA_PORT             := 9092
@@ -384,6 +385,15 @@ langfuse-port-forward:
 	oc port-forward svc/langfuse-web $(LANGFUSE_PORT):$(LANGFUSE_PORT) \
 		--namespace $(NAMESPACE)
 
+# ── Quick rebuild targets ────────────────────────────────────────
+
+.PHONY: _rebuild-mcp-kafka
+_rebuild-mcp-kafka:
+	$(CONTAINER_TOOL) build -t $(MCP_KAFKA_IMG) --platform=$(ARCH) --build-arg SERVICE_NAME=mcp-kafka --build-arg MODULE_NAME=mcp_kafka -f $(MCP_CONTAINERFILE) $(MCP_CONTEXT)
+	$(CONTAINER_TOOL) push $(MCP_KAFKA_IMG) $(PUSH_EXTRA_ARGS)
+	oc rollout restart deployment/mcp-noc-kafka -n $(NAMESPACE)
+	oc rollout status deployment/mcp-noc-kafka -n $(NAMESPACE) --timeout=120s
+
 # ── Kafka targets ────────────────────────────────────────────────
 # Before production: review hub/infra/kafka/README.md and search for "TODO: PRODUCTION:" in values.yaml
 
@@ -393,6 +403,7 @@ kafka-install:
 		--namespace $(NAMESPACE) \
 		--values $(KAFKA_VALUES) \
 		--set kafkaUI.enabled=$(ENABLE_KAFKA_UI) \
+		--set kafkaRestProxy.enabled=$(ENABLE_KAFKA_REST) \
 		--set kafka.externalRoute.enabled=$(ROUTES_ENABLED) \
 		--set kafkaUI.route.enabled=$(ROUTES_ENABLED) \
 		$(KAFKA_HELM_EXTRA_ARGS) \

@@ -254,6 +254,27 @@ See [Langfuse Deployment Guide](docs/langfuse-deploy.md) for details.
 - **Playbook definitions** → AAP (Ansible)
 - **Logs** → Kafka (event stream)
 
+### Log-Based Alerting with Grafana and Kafka REST Proxy
+
+The platform uses a log-based alerting pipeline that connects Grafana to the AI
+agent via Kafka.
+
+1. Workloads emit JSON structured logs (e.g. with a `queue_depth` field)
+2. Logs are collected by OpenShift Logging and stored in Loki
+3. Grafana evaluates LogQL alert rules against the Loki datasource
+4. When an alert fires, Grafana's contact point sends the alert payload to the
+   Kafka REST Proxy over HTTP
+5. The Kafka REST Proxy produces the message to the `system-alerts` Kafka topic
+6. The AI agent consumes the alert from Kafka via the MCP Kafka server and
+   begins root cause analysis
+
+```
+Workload logs → Loki → Grafana Alert (LogQL) → Kafka REST Proxy → Kafka (system-alerts) → AI Agent
+```
+
+Alert rules, contact points, and notification policies are provisioned
+declaratively via ConfigMaps mounted into Grafana's provisioning directory.
+
 ### Multi-Cluster Coordination
 
 **Hub Cluster (Hub-Spoke Mode):**

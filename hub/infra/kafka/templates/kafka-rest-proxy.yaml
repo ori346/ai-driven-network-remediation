@@ -1,0 +1,49 @@
+# HTTP-to-Kafka bridge — allows Grafana alert contact points to produce
+# messages to Kafka topics via REST API (Confluent REST Proxy).
+{{- if .Values.kafkaRestProxy.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kafka-rest-proxy
+  labels:
+    app: kafka-rest-proxy
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kafka-rest-proxy
+  template:
+    metadata:
+      labels:
+        app: kafka-rest-proxy
+    spec:
+      containers:
+        - name: kafka-rest-proxy
+          image: {{ .Values.kafkaRestProxy.image.repository }}:{{ .Values.kafkaRestProxy.image.tag }}
+          imagePullPolicy: {{ .Values.kafkaRestProxy.image.pullPolicy }}
+          ports:
+            - { containerPort: {{ .Values.kafkaRestProxy.service.port }}, name: http }
+          env:
+            - { name: KAFKA_REST_BOOTSTRAP_SERVERS, value: "kafka:{{ .Values.kafka.service.port }}" }
+            - { name: KAFKA_REST_HOST_NAME, value: "kafka-rest-proxy" }
+            - { name: KAFKA_REST_LISTENERS, value: "http://0.0.0.0:{{ .Values.kafkaRestProxy.service.port }}" }
+          resources:
+            {{- toYaml .Values.kafkaRestProxy.resources | nindent 12 }}
+          readinessProbe:
+            httpGet: { path: /, port: {{ .Values.kafkaRestProxy.service.port }} }
+            initialDelaySeconds: 30
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kafka-rest-proxy
+  labels:
+    app: kafka-rest-proxy
+spec:
+  type: ClusterIP
+  selector:
+    app: kafka-rest-proxy
+  ports:
+    - { port: {{ .Values.kafkaRestProxy.service.port }}, targetPort: {{ .Values.kafkaRestProxy.service.port }}, name: http }
+{{- end }}

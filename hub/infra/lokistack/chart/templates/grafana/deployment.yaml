@@ -33,9 +33,16 @@ spec:
               mountPath: /etc/grafana
             - name: grafana-datasources
               mountPath: /etc/grafana/provisioning/datasources
-            - name: loki-token
-              mountPath: /var/run/secrets/loki-token
+            - name: loki-client-cert
+              mountPath: /var/run/tls/loki
               readOnly: true
+            - name: loki-ca
+              mountPath: /var/run/ca/loki
+              readOnly: true
+            {{- if .Values.grafana.alerting.enabled }}
+            - name: grafana-alerting
+              mountPath: /etc/grafana/provisioning/alerting
+            {{- end }}
           resources:
             {{- toYaml .Values.grafana.resources | nindent 12 }}
       volumes:
@@ -45,7 +52,20 @@ spec:
         - name: grafana-datasources
           configMap:
             name: grafana-datasources
-        - name: loki-token
+        - name: loki-client-cert
           secret:
-            secretName: grafana-loki-token
+            secretName: {{ .Values.lokistack.name }}-gateway-client-http
+        - name: loki-ca
+          configMap:
+            name: {{ .Values.lokistack.name }}-ca-bundle
+        {{- if .Values.grafana.alerting.enabled }}
+        - name: grafana-alerting
+          projected:
+            sources:
+            {{- range .Values.grafana.alerting.sources }}
+              - configMap:
+                  name: {{ . }}
+                  optional: true
+            {{- end }}
+        {{- end }}
 {{- end }}

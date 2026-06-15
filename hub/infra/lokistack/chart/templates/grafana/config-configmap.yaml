@@ -25,4 +25,9 @@ data:
     admin_user = {{ .Values.grafana.adminUser }}
     admin_password = {{ .Values.grafana.adminPassword }}
 
+    {{- if .Values.grafana.alerting.enabled }}
+    [unified_alerting]
+    enabled = true
+    {{- end }}
+
 {{- end }}

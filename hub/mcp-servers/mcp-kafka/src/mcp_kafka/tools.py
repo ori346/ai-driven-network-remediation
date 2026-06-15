@@ -17,6 +17,41 @@ from .validators import (
 
 logger = logging.getLogger(__name__)
 
+_seen_incident_keys: set = set()
+
+
+# Grafana fires repeatedly for the same incident; keep only the first
+# "alerting" message per incident_key and let "resolved" messages through.
+def _dedup_messages(messages):
+    deduped = []
+    for msg in messages:
+        value = msg.get("value")
+        # Non-dict payloads (plain strings, etc.) — pass through as-is
+        if not isinstance(value, dict):
+            deduped.append(msg)
+            continue
+
+        incident_key = value.get("incident_key")
+        # No incident_key means it's not a Grafana alert — pass through
+        if incident_key is None:
+            deduped.append(msg)
+            continue
+
+        alert_state = value.get("alert_state", "")
+        # "resolved" or other non-alerting states reset the key so
+        # a future re-fire of the same incident is not suppressed
+        if alert_state != "alerting":
+            _seen_incident_keys.discard(incident_key)
+            deduped.append(msg)
+            continue
+
+        # First time seeing this incident — keep it; duplicates are dropped
+        if incident_key not in _seen_incident_keys:
+            _seen_incident_keys.add(incident_key)
+            deduped.append(msg)
+
+    return deduped
+
 
 def _seek_to_tail(consumer, topic, max_messages):
     partitions = consumer.partitions_for_topic(topic)
@@ -138,6 +173,7 @@ def consume_topic(
         finally:
             consumer.close()
 
+        messages = _dedup_messages(messages)
         logger.info("consume_topic topic=%s count=%d", topic, len(messages))
         result: dict = {"success": True, "topic": topic, "messages": messages, "count": len(messages)}
         clamped = {}
@@ -254,6 +290,24 @@ def get_consumer_lag(
     except Exception as exc:
         logger.error("get_consumer_lag failed group=%s topic=%s", group_id, topic, exc_info=True)
         return format_error(exc)
+
+
+# TODO: remove before release to production
+@mcp.tool()
+def clear_dedup_cache() -> dict:
+    """
+    Clear the in-memory alert dedup cache (for testing).
+
+    Allows previously-seen alerts to be consumed again when
+    re-running a demo scenario.
+
+    Returns:
+        Dict with the number of keys cleared
+    """
+    count = len(_seen_incident_keys)
+    _seen_incident_keys.clear()
+    logger.info("clear_dedup_cache cleared=%d", count)
+    return {"success": True, "cleared": count}
 
 
 @mcp.tool()
