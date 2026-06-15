@@ -1,0 +1,22 @@
+{
+  "servicenow": {
+    "agent_user": {
+      "user_id": "noc_agent",
+      "first_name": "NOC",
+      "last_name": "Agent",
+      "identity_type": "machine",
+      "roles_to_assign": [
+        "rest_service",
+        "itil"
+      ]
+    },
+    "api_key_name": "NOC Agent API Key",
+    "caller_name": "NOC Agent"
+  },
+  "incident": {
+    "assignment_groups": ["NOC-Team", "Edge-Ops"],
+    "categories": {
+      "Infrastructure": ["OpenShift", "Network", "Kubernetes"]
+    }
+  }
+}

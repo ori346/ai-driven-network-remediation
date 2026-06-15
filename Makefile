@@ -61,7 +61,7 @@ MINIO_PORT             ?= 9000
 MINIO_HELM_EXTRA_ARGS  ?=
 
 # ── AAP Mock (optional: ENABLE_AAP_MOCK=true) ──────────────────
-ENABLE_AAP_MOCK        ?= false
+ENABLE_AAP_MOCK        ?= true
 AAP_MOCK_IMG           := $(REGISTRY)/aap-mock:$(VERSION)
 
 # ── ServiceNow Mock ──────────────────────────────────────────────
@@ -98,6 +98,9 @@ helm_servicenow_mock_args = \
 	$(if $(filter true,$(ENABLE_SERVICENOW_MOCK)),--set mcp-servers.mcp-servers.noc-servicenow.env.SERVICENOW_URL=http://servicenow-mock.$(NAMESPACE).svc:8080,) \
 	$(if $(filter true,$(ENABLE_SERVICENOW_MOCK)),--set mcp-servers.mcp-servers.noc-servicenow.env.SERVICENOW_MODE=mock,) \
 	$(if $(filter true,$(ENABLE_SERVICENOW_MOCK)),--set-string mcpSecrets.servicenow.apiKey=demo-api-key-2026,)
+
+helm_lokistack_registration_args = \
+	$(if $(filter true,$(ENABLE_LOKISTACK)),--set-string llama-stack.mcp-servers.noc-lokistack.uri=http://mcp-noc-lokistack:8000/mcp,)
 
 .PHONY: build-all-images
 build-all-images: build-chatbot-image build-agent-image build-mcp-images
@@ -170,6 +173,9 @@ helm-depend:
 
 .PHONY: helm-install
 helm-install: namespace helm-depend
+ifeq ($(ENABLE_KAFKA),true)
+	$(MAKE) kafka-install
+endif
 ifeq ($(ENABLE_MINIO),true)
 	$(MAKE) minio-install
 endif
@@ -198,6 +204,7 @@ ifeq ($(ENABLE_HUB),true)
 		--set mcp-servers.mcp-servers.noc-lokistack.enabled=$(ENABLE_LOKISTACK) \
 		--set-string lokistack.name='$(LOKISTACK_NAME)' \
 		--set-string lokistack.namespace='$(LOKISTACK_NAMESPACE)' \
+		$(helm_lokistack_registration_args) \
 		$(helm_adnr_llm_args) \
 		$(helm_aap_mock_args) \
 		$(helm_servicenow_mock_args) \
@@ -208,9 +215,6 @@ else
 endif
 ifeq ($(ENABLE_LANGFUSE),true)
 	$(MAKE) _langfuse-deploy
-endif
-ifeq ($(ENABLE_KAFKA),true)
-	$(MAKE) kafka-install
 endif
 
 .PHONY: helm-uninstall
@@ -347,6 +351,8 @@ ifeq ($(ENABLE_HUB),true)
 	PF2_PID=$$!; \
 	oc port-forward -n $(NAMESPACE) svc/mcp-noc-openshift 8001:8000 & \
 	PF3_PID=$$!; \
+	oc port-forward -n $(NAMESPACE) svc/llamastack 8321:8321 & \
+	PF10_PID=$$!; \
 	PF4_PID=""; \
 	if [ "$(ENABLE_LOKISTACK)" = "true" ]; then \
 		oc port-forward -n $(NAMESPACE) svc/mcp-noc-lokistack 8002:8000 & \
@@ -362,9 +368,9 @@ ifeq ($(ENABLE_HUB),true)
 	PF8_PID=$$!; \
 	oc port-forward -n $(NAMESPACE) svc/hub-agent-service 8007:8001 & \
 	PF9_PID=$$!; \
-	trap "kill $$PF1_PID $$PF2_PID $$PF3_PID $$PF4_PID $$PF5_PID $$PF6_PID $$PF7_PID $$PF8_PID $$PF9_PID" EXIT; \
+	trap "kill $$PF1_PID $$PF2_PID $$PF3_PID $$PF4_PID $$PF5_PID $$PF6_PID $$PF7_PID $$PF8_PID $$PF9_PID $$PF10_PID" EXIT; \
 	sleep 2 && cd hub/integration-tests && \
-	AGENT_SERVICE_URL=http://localhost:8007 ENABLE_LOKISTACK=$(ENABLE_LOKISTACK) EDGE_NAMESPACE=$(EDGE_NAMESPACE) uv run pytest
+	AGENT_SERVICE_URL=http://localhost:8007 LLAMASTACK_URL=http://localhost:8321 ENABLE_LOKISTACK=$(ENABLE_LOKISTACK) EDGE_NAMESPACE=$(EDGE_NAMESPACE) uv run pytest
 else
 	@echo "ENABLE_HUB is not true — skipping hub integration tests"
 endif
@@ -427,3 +433,43 @@ langfuse-status:
 	@echo ""
 	@echo "=== Secrets ==="
 	oc get secret langfuse-secrets --namespace $(NAMESPACE) 2>/dev/null || echo "(none)"
+
+# ── ServiceNow PDI Bootstrap ────────────────────────────────
+
+SERVICENOW_BOOTSTRAP_DIR := scripts/servicenow-bootstrap
+
+.PHONY: deps-servicenow-bootstrap
+deps-servicenow-bootstrap:
+	cd $(SERVICENOW_BOOTSTRAP_DIR) && uv sync
+
+.PHONY: servicenow-wake-install
+servicenow-wake-install:
+	cd $(SERVICENOW_BOOTSTRAP_DIR) && uv sync --group wake && uv run playwright install chromium
+
+.PHONY: servicenow-wake
+servicenow-wake:
+	cd $(SERVICENOW_BOOTSTRAP_DIR) && uv sync --group wake && uv run python -m servicenow_bootstrap.wake_up_pdi
+
+.PHONY: servicenow-bootstrap
+servicenow-bootstrap: deps-servicenow-bootstrap
+	cd $(SERVICENOW_BOOTSTRAP_DIR) && uv run python -m servicenow_bootstrap.orchestrator --config config.json
+
+.PHONY: servicenow-bootstrap-validate
+servicenow-bootstrap-validate: deps-servicenow-bootstrap
+	cd $(SERVICENOW_BOOTSTRAP_DIR) && uv run python -m servicenow_bootstrap.setup_validations
+
+.PHONY: servicenow-bootstrap-create-user
+servicenow-bootstrap-create-user: deps-servicenow-bootstrap
+	cd $(SERVICENOW_BOOTSTRAP_DIR) && uv run python -m servicenow_bootstrap.create_noc_agent_user --config config.json
+
+.PHONY: servicenow-bootstrap-create-api-key
+servicenow-bootstrap-create-api-key: deps-servicenow-bootstrap
+	cd $(SERVICENOW_BOOTSTRAP_DIR) && uv run python -m servicenow_bootstrap.create_noc_agent_api_key --config config.json
+
+.PHONY: servicenow-bootstrap-create-data
+servicenow-bootstrap-create-data: deps-servicenow-bootstrap
+	cd $(SERVICENOW_BOOTSTRAP_DIR) && uv run python -m servicenow_bootstrap.create_incident_test_data --config config.json
+
+.PHONY: test-servicenow-bootstrap
+test-servicenow-bootstrap: deps-servicenow-bootstrap
+	cd $(SERVICENOW_BOOTSTRAP_DIR) && uv run pytest

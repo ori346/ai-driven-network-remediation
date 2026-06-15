@@ -1,9 +1,9 @@
 from fastapi.testclient import TestClient
 
 from agent_service.server import app
-from agent_service.models import RemediationState
+from agent_service.models import IncidentState
 
-REMEDIATION_STATE_FIELDS = set(RemediationState.model_fields.keys())
+INCIDENT_STATE_FIELDS = set(IncidentState.model_fields.keys())
 
 client = TestClient(app)
 
@@ -28,8 +28,24 @@ class TestRemediateEndpoint:
         assert response.status_code == 200
         body = response.json()
         assert body["raw_event"] == "test event"
-        assert set(body.keys()) == REMEDIATION_STATE_FIELDS
+        assert set(body.keys()) == INCIDENT_STATE_FIELDS
         assert body["decision"] != ""
+
+    def test_post_remediate_with_failure_type_override(self):
+        response = client.post(
+            "/remediate",
+            json={"raw_event": "test event", "confidence_override": 0.9, "failure_type_override": "KafkaLag"},
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["decision"] == "lightspeed"
+
+    def test_post_remediate_rejects_invalid_failure_type_override(self):
+        response = client.post(
+            "/remediate",
+            json={"raw_event": "test event", "failure_type_override": "FooBar"},
+        )
+        assert response.status_code == 422
 
     def test_post_remediate_rejects_missing_raw_event(self):
         response = client.post("/remediate", json={})

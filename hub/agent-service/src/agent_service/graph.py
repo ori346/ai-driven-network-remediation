@@ -3,20 +3,21 @@ from typing import Optional
 
 from langgraph.graph import END, START, StateGraph
 
-from agent_service.models import GraphConfig, RemediationState
+from agent_service.models import GraphConfig, IncidentState
 from agent_service.nodes import (
     analyze_node,
-    context_node,
+    audit_node,
     escalate_node,
-    execute_node,
-    ingest_node,
+    lightspeed_node,
+    normalize_node,
     notify_node,
-    request_approval_node,
+    rag_retrieval_node,
+    remediate_node,
 )
 from agent_service.nodes.decide import make_decide_node
 
 
-def _route_after_decide(state: RemediationState) -> str:
+def _route_after_decide(state: IncidentState) -> str:
     return state.decision
 
 
@@ -24,30 +25,32 @@ def build_graph(config: Optional[GraphConfig] = None):
     if config is None:
         config = GraphConfig()
 
-    graph = StateGraph(RemediationState)
+    graph = StateGraph(IncidentState)
 
-    graph.add_node("ingest", ingest_node)
-    graph.add_node("context", context_node)
+    graph.add_node("normalize", normalize_node)
+    graph.add_node("rag_retrieval", rag_retrieval_node)
     graph.add_node("analyze", analyze_node)
     graph.add_node("decide", make_decide_node(config))
-    graph.add_node("execute", execute_node)
+    graph.add_node("remediate", remediate_node)
+    graph.add_node("lightspeed", lightspeed_node)
     graph.add_node("escalate", escalate_node)
-    graph.add_node("request_approval", request_approval_node)
     graph.add_node("notify", notify_node)
+    graph.add_node("audit", audit_node)
 
-    graph.add_edge(START, "ingest")
-    graph.add_edge("ingest", "context")
-    graph.add_edge("context", "analyze")
+    graph.add_edge(START, "normalize")
+    graph.add_edge("normalize", "rag_retrieval")
+    graph.add_edge("rag_retrieval", "analyze")
     graph.add_edge("analyze", "decide")
     graph.add_conditional_edges(
         "decide",
         _route_after_decide,
-        {"execute": "execute", "escalate": "escalate", "request_approval": "request_approval"},
+        {"remediate": "remediate", "lightspeed": "lightspeed", "escalate": "escalate"},
     )
-    graph.add_edge("execute", "notify")
+    graph.add_edge("remediate", "notify")
+    graph.add_edge("lightspeed", "notify")
     graph.add_edge("escalate", "notify")
-    graph.add_edge("request_approval", "notify")
-    graph.add_edge("notify", END)
+    graph.add_edge("notify", "audit")
+    graph.add_edge("audit", END)
 
     return graph.compile()
 
