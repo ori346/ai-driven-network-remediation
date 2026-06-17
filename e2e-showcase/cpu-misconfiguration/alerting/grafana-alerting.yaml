@@ -4,6 +4,7 @@ metadata:
   name: grafana-alerting
   labels:
     app: grafana
+    grafana-alerting: "true"
 data:
   alerting.yaml: |
     apiVersion: 1

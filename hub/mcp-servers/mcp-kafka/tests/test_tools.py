@@ -4,8 +4,9 @@ import pytest
 from kafka.errors import NoBrokersAvailable
 from kafka.structs import TopicPartition
 from mcp_kafka.tools import (
+    _acked_incident_keys,
     _dedup_messages,
-    _seen_incident_keys,
+    ack_incident,
     clear_dedup_cache,
     consume_topic,
     get_consumer_lag,
@@ -244,41 +245,74 @@ class TestGetConsumerLag:
 class TestDedupMessages:
     @pytest.fixture(autouse=True)
     def _clear_cache(self):
-        _seen_incident_keys.clear()
+        _acked_incident_keys.clear()
         yield
-        _seen_incident_keys.clear()
+        _acked_incident_keys.clear()
 
-    def test_duplicate_alerting_dropped(self):
+    def test_unacked_alert_returned_every_time(self):
         msg = {"value": {"incident_key": "k1", "alert_state": "alerting"}}
         assert len(_dedup_messages([msg])) == 1
+        assert len(_dedup_messages([msg])) == 1
+
+    def test_acked_alert_suppressed(self):
+        msg = {"value": {"incident_key": "k1", "alert_state": "alerting"}}
+        assert len(_dedup_messages([msg])) == 1
+        _acked_incident_keys.add("k1")
         assert len(_dedup_messages([msg])) == 0
 
-    def test_resolved_clears_cache(self):
+    def test_resolved_clears_acked(self):
         alerting = {"value": {"incident_key": "k1", "alert_state": "alerting"}}
         resolved = {"value": {"incident_key": "k1", "alert_state": "ok"}}
 
-        _dedup_messages([alerting])
+        _acked_incident_keys.add("k1")
         result = _dedup_messages([resolved])
         assert len(result) == 1
+        assert "k1" not in _acked_incident_keys
 
         result = _dedup_messages([alerting])
         assert len(result) == 1
+
+    def test_non_dict_passthrough(self):
+        msg = {"value": "plain string"}
+        assert len(_dedup_messages([msg])) == 1
+
+    def test_no_incident_key_passthrough(self):
+        msg = {"value": {"alert_state": "alerting"}}
+        assert len(_dedup_messages([msg])) == 1
+
+
+class TestAckIncident:
+    @pytest.fixture(autouse=True)
+    def _clear_cache(self):
+        _acked_incident_keys.clear()
+        yield
+        _acked_incident_keys.clear()
+
+    def test_ack_adds_key(self):
+        result = ack_incident("k1")
+        assert result == {"success": True, "incident_key": "k1"}
+        assert "k1" in _acked_incident_keys
+
+    def test_ack_idempotent(self):
+        ack_incident("k1")
+        ack_incident("k1")
+        assert "k1" in _acked_incident_keys
 
 
 class TestClearDedupCache:
     @pytest.fixture(autouse=True)
     def _clear_cache(self):
-        _seen_incident_keys.clear()
+        _acked_incident_keys.clear()
         yield
-        _seen_incident_keys.clear()
+        _acked_incident_keys.clear()
 
     def test_clears_and_returns_count(self):
-        _seen_incident_keys.update(["a", "b", "c"])
+        _acked_incident_keys.update(["a", "b", "c"])
 
         result = clear_dedup_cache()
 
         assert result == {"success": True, "cleared": 3}
-        assert len(_seen_incident_keys) == 0
+        assert len(_acked_incident_keys) == 0
 
     def test_empty_cache(self):
         result = clear_dedup_cache()

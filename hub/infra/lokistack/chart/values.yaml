@@ -147,13 +147,27 @@ grafana:
       termination: edge
       insecureEdgeTerminationPolicy: Redirect
 
-  # Alerting — enables unified alerting and mounts an alerting provisioning directory.
-  # To provision alert rules, create a ConfigMap with your alerting YAML and add
-  # its name to the sources list. Each source is optional so Grafana starts even
-  # if the ConfigMap does not exist yet.
+  # Alerting — enables unified alerting with a k8s-sidecar that auto-discovers
+  # ConfigMaps labeled with the configured label/value, syncs them into the
+  # Grafana provisioning directory, and triggers a hot-reload via the Grafana API.
+  # Clients add alert rules by creating a ConfigMap with the label in their own
+  # Helm chart — no chart modification or pod restart required.
   alerting:
     enabled: true
-    sources: []
+    sidecar:
+      image:
+        repository: ghcr.io/kiwigrid/k8s-sidecar
+        tag: 1.30.3
+        pullPolicy: IfNotPresent
+      label: grafana-alerting
+      labelValue: "true"
+      resources:
+        requests:
+          cpu: 50m
+          memory: 64Mi
+        limits:
+          cpu: 100m
+          memory: 128Mi
 
   # RBAC — Grafana connects directly to the query-frontend via mTLS,
   # bypassing the LokiStack gateway (which requires OpenShift OAuth).

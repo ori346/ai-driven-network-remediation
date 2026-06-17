@@ -45,6 +45,35 @@ spec:
             {{- end }}
           resources:
             {{- toYaml .Values.grafana.resources | nindent 12 }}
+        {{- if .Values.grafana.alerting.enabled }}
+        - name: alerting-sidecar
+          image: {{ .Values.grafana.alerting.sidecar.image.repository }}:{{ .Values.grafana.alerting.sidecar.image.tag }}
+          imagePullPolicy: {{ .Values.grafana.alerting.sidecar.image.pullPolicy }}
+          env:
+            - name: LABEL
+              value: {{ .Values.grafana.alerting.sidecar.label | quote }}
+            - name: LABEL_VALUE
+              value: {{ .Values.grafana.alerting.sidecar.labelValue | quote }}
+            - name: FOLDER
+              value: /etc/grafana/provisioning/alerting
+            - name: NAMESPACE
+              value: {{ include "lokistack.namespace" . }}
+            - name: RESOURCE
+              value: configmap
+            - name: REQ_URL
+              value: http://localhost:{{ .Values.grafana.service.port }}/api/admin/provisioning/alerting/reload
+            - name: REQ_METHOD
+              value: POST
+            - name: REQ_USERNAME
+              value: {{ .Values.grafana.adminUser | quote }}
+            - name: REQ_PASSWORD
+              value: {{ .Values.grafana.adminPassword | quote }}
+          volumeMounts:
+            - name: grafana-alerting
+              mountPath: /etc/grafana/provisioning/alerting
+          resources:
+            {{- toYaml .Values.grafana.alerting.sidecar.resources | nindent 12 }}
+        {{- end }}
       volumes:
         - name: grafana-config
           configMap:
@@ -60,12 +89,6 @@ spec:
             name: {{ .Values.lokistack.name }}-ca-bundle
         {{- if .Values.grafana.alerting.enabled }}
         - name: grafana-alerting
-          projected:
-            sources:
-            {{- range .Values.grafana.alerting.sources }}
-              - configMap:
-                  name: {{ . }}
-                  optional: true
-            {{- end }}
+          emptyDir: {}
         {{- end }}
 {{- end }}

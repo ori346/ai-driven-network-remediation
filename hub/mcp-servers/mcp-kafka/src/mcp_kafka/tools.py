@@ -17,12 +17,24 @@ from .validators import (
 
 logger = logging.getLogger(__name__)
 
-_seen_incident_keys: set = set()
+# Two-phase dedup for Grafana alerts.
+#
+# Grafana fires repeatedly for the same incident. We suppress duplicates
+# but only AFTER the caller has explicitly acknowledged the alert via
+# ack_incident — not at consume time. This prevents silent alert loss
+# when the caller fails mid-processing (e.g. LLM timeout, MCP down).
+#
+# Alert lifecycle per incident_key:
+#   unacked  — alert is returned by consume_topic on every call
+#   acked    — caller called ack_incident (remediated, escalated, or
+#              skipped); future consume_topic calls suppress this key
+#   resolved — Grafana sent alert_state != "alerting"; the key is
+#              removed from the acked set so a re-fire is not suppressed
+_acked_incident_keys: set = set()
 
 
-# Grafana fires repeatedly for the same incident; keep only the first
-# "alerting" message per incident_key and let "resolved" messages through.
 def _dedup_messages(messages):
+    """Filter out alerts the caller has already acknowledged."""
     deduped = []
     for msg in messages:
         value = msg.get("value")
@@ -41,13 +53,12 @@ def _dedup_messages(messages):
         # "resolved" or other non-alerting states reset the key so
         # a future re-fire of the same incident is not suppressed
         if alert_state != "alerting":
-            _seen_incident_keys.discard(incident_key)
+            _acked_incident_keys.discard(incident_key)
             deduped.append(msg)
             continue
 
-        # First time seeing this incident — keep it; duplicates are dropped
-        if incident_key not in _seen_incident_keys:
-            _seen_incident_keys.add(incident_key)
+        # Only suppress alerts the caller has explicitly acknowledged
+        if incident_key not in _acked_incident_keys:
             deduped.append(msg)
 
     return deduped
@@ -292,20 +303,42 @@ def get_consumer_lag(
         return format_error(exc)
 
 
+@mcp.tool()
+def ack_incident(incident_key: str) -> dict:
+    """
+    Acknowledge a handled alert so it won't be returned by future
+    consume_topic calls.
+
+    Call this after the alert has been fully handled — whether
+    remediation succeeded, failed and was escalated, or was
+    intentionally skipped. If the caller crashes before acking,
+    the alert reappears on the next consume_topic call.
+
+    Args:
+        incident_key: The incident_key from the alert payload
+
+    Returns:
+        Dict with acknowledgment confirmation
+    """
+    _acked_incident_keys.add(incident_key)
+    logger.info("ack_incident key=%s", incident_key)
+    return {"success": True, "incident_key": incident_key}
+
+
 # TODO: remove before release to production
 @mcp.tool()
 def clear_dedup_cache() -> dict:
     """
     Clear the in-memory alert dedup cache (for testing).
 
-    Allows previously-seen alerts to be consumed again when
-    re-running a demo scenario.
+    Allows previously-acknowledged alerts to be consumed again
+    when re-running a demo scenario.
 
     Returns:
         Dict with the number of keys cleared
     """
-    count = len(_seen_incident_keys)
-    _seen_incident_keys.clear()
+    count = len(_acked_incident_keys)
+    _acked_incident_keys.clear()
     logger.info("clear_dedup_cache cleared=%d", count)
     return {"success": True, "cleared": count}
 

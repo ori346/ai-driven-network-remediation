@@ -5,4 +5,30 @@ kind: ServiceAccount
 metadata:
   name: {{ .Values.grafana.rbac.serviceAccount.name }}
   namespace: {{ include "lokistack.namespace" . }}
+{{- if .Values.grafana.alerting.enabled }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: grafana-alerting-sidecar
+  namespace: {{ include "lokistack.namespace" . }}
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: grafana-alerting-sidecar
+  namespace: {{ include "lokistack.namespace" . }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: grafana-alerting-sidecar
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Values.grafana.rbac.serviceAccount.name }}
+    namespace: {{ include "lokistack.namespace" . }}
+{{- end }}
 {{- end }}
