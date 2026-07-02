@@ -10,7 +10,9 @@ requires-python = ">=3.13"
 dependencies = [
     "click>=8.1.0",
     "fastapi>=0.115",
+    "langchain-openai>=0.3",
     "langgraph>=1.0.0",
+    "llama-stack-client>=0.7.4",
     "loguru>=0.7.0",
     "pydantic>=2.0.0",
     "uvicorn>=0.34",
@@ -26,9 +28,22 @@ build-backend = "uv_build"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["tests"]
+asyncio_mode = "auto"
+addopts = "--cov --cov-report=term-missing"
 
 [dependency-groups]
 dev = [
     "httpx2>=0.1",
     "pytest>=7.4.0",
+    "pytest-asyncio>=1.4.0",
+    "pytest-cov>=6.0",
 ]
+
+[tool.coverage.run]
+source = ["agent_service"]
+
+[tool.coverage.report]
+fail_under = 65
+show_missing = true
+skip_empty = true

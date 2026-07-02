@@ -22,6 +22,8 @@ kafka:
     limits:
       cpu: 500m
       memory: 1Gi
+  # Image default is -Xmx1G; keep max heap below resources.limits.memory for off-heap headroom
+  jvmHeapOpts: "-Xmx768m -Xms512m"
   topics:
     - { name: system-alerts, partitions: 3, retention: 604800000 }
     - { name: noc-alerts, partitions: 1, retention: 2592000000 }

@@ -49,6 +49,7 @@ class RemediationResult(BaseModel):
     duration_seconds: float
     output_summary: str
     timestamp: str
+    timed_out: bool = False
     generated_template_name: Optional[str] = None
     generated_template_id: Optional[str] = None
     generated_playbook_name: Optional[str] = None
@@ -58,10 +59,13 @@ class RemediationResult(BaseModel):
 class GraphConfig(BaseModel):
     remediate_threshold: float = 0.8
     escalate_threshold: float = 0.7
+    max_retries: int = 1
+    job_timeout: float = 120.0
 
 
 class IncidentState(BaseModel):
     raw_event: str
+    kafka_offset: int = 0
     log_event: Optional[LogEvent] = None
     incident_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     incident_start_ms: float = Field(default_factory=lambda: time.time() * 1000)
@@ -73,6 +77,8 @@ class IncidentState(BaseModel):
     analysis_tokens_used: int = 0
     analysis_latency_ms: float = 0.0
     decision: str = ""
+    failed_attempts: list[dict] = []
+    should_retry: bool = False
     remediation_result: Optional[RemediationResult] = None
     pod_status: dict = {}
     recent_errors: list[dict] = []

@@ -11,6 +11,7 @@ ROUTES_ENABLED  ?= true
 CHATBOT_IMG        := $(REGISTRY)/noc-chatbot-service:$(VERSION)
 INGESTION_IMG      := $(REGISTRY)/noc-ingestion-pipeline:$(VERSION)
 AGENT_IMG          := $(REGISTRY)/noc-agent-service:$(VERSION)
+FRONTEND_IMG       := $(REGISTRY)/noc-frontend:$(VERSION)
 MCP_OPENSHIFT_IMG  := $(REGISTRY)/noc-mcp-openshift:$(VERSION)
 MCP_LOKISTACK_IMG  := $(REGISTRY)/noc-mcp-lokistack:$(VERSION)
 MCP_KAFKA_IMG      := $(REGISTRY)/noc-mcp-kafka:$(VERSION)
@@ -61,15 +62,48 @@ MINIO_NAMESPACE        ?= $(NAMESPACE)
 MINIO_PORT             ?= 9000
 MINIO_HELM_EXTRA_ARGS  ?=
 
+# ── AutoRAG ──────────────────────────────────────────────────────
+MILVUS_RELEASE         := milvus
+MILVUS_CHART           := hub/infra/milvus
+AUTORAG_RELEASE        := autorag
+AUTORAG_CHART          := hub/infra/autorag
+AUTORAG_HELM_EXTRA_ARGS ?=
+
 # ── AAP Mock (optional: ENABLE_AAP_MOCK=true) ──────────────────
 ENABLE_AAP_MOCK        ?= true
-AAP_MOCK_IMG           := $(REGISTRY)/aap-mock:$(VERSION)
+AAP_MOCK_IMG           := $(REGISTRY)/noc-aap-mock:$(VERSION)
 
 # ── ServiceNow Mock ──────────────────────────────────────────────
 ENABLE_SERVICENOW_MOCK ?= true
-SERVICENOW_MOCK_IMG    := $(REGISTRY)/servicenow-mock:$(VERSION)
+SERVICENOW_MOCK_IMG    := $(REGISTRY)/noc-servicenow-mock:$(VERSION)
+
+CORE_BUILD_PUSH_IMAGES := \
+	$(CHATBOT_IMG) \
+	$(INGESTION_IMG) \
+	$(AGENT_IMG) \
+	$(FRONTEND_IMG) \
+	$(MCP_OPENSHIFT_IMG) \
+	$(MCP_LOKISTACK_IMG) \
+	$(MCP_KAFKA_IMG) \
+	$(MCP_AAP_IMG) \
+	$(MCP_SLACK_IMG) \
+	$(MCP_SERVICENOW_IMG)
+
+EXTRA_BUILD_PUSH_IMAGES := \
+	$(AAP_MOCK_IMG) \
+	$(SERVICENOW_MOCK_IMG)
+
+# `build-all-images` and `push-all-images` operate on the core images only.
+# The mock images are handled by the dedicated `build-push-*` targets below.
+ALL_BUILD_PUSH_IMAGES := \
+	$(CORE_BUILD_PUSH_IMAGES) \
+	$(EXTRA_BUILD_PUSH_IMAGES)
 
 ADNR_LLM_ENABLED := $(and $(ADNR_LLM_ID),$(ADNR_LLM_URL),$(ADNR_LLM_TOKEN))
+
+.PHONY: version
+version:
+	@echo $(VERSION)
 
 helm_adnr_llm_args = \
 	$(if $(ADNR_LLM_ENABLED),--set llama-stack.models.adnr-llm.enabled=true,) \
@@ -104,7 +138,7 @@ helm_lokistack_registration_args = \
 	$(if $(filter true,$(ENABLE_LOKISTACK)),--set-string llama-stack.mcp-servers.noc-lokistack.uri=http://mcp-noc-lokistack:8000/mcp,)
 
 .PHONY: build-all-images
-build-all-images: build-chatbot-image build-agent-image build-mcp-images
+build-all-images: build-chatbot-image build-agent-image build-frontend-image build-mcp-images
 
 .PHONY: build-chatbot-image
 build-chatbot-image:
@@ -114,6 +148,10 @@ build-chatbot-image:
 .PHONY: build-agent-image
 build-agent-image:
 	$(CONTAINER_TOOL) build -t $(AGENT_IMG) --platform=$(ARCH) -f hub/agent-service/Containerfile hub/agent-service
+
+.PHONY: build-frontend-image
+build-frontend-image:
+	$(CONTAINER_TOOL) build -t $(FRONTEND_IMG) --platform=$(ARCH) -f hub/frontend/Containerfile hub/frontend
 
 .PHONY: build-mcp-images
 build-mcp-images:
@@ -126,15 +164,13 @@ build-mcp-images:
 
 .PHONY: push-all-images
 push-all-images:
-	$(CONTAINER_TOOL) push $(CHATBOT_IMG) $(PUSH_EXTRA_ARGS)
-	$(CONTAINER_TOOL) push $(INGESTION_IMG) $(PUSH_EXTRA_ARGS)
-	$(CONTAINER_TOOL) push $(AGENT_IMG) $(PUSH_EXTRA_ARGS)
-	$(CONTAINER_TOOL) push $(MCP_OPENSHIFT_IMG) $(PUSH_EXTRA_ARGS)
-	$(CONTAINER_TOOL) push $(MCP_LOKISTACK_IMG) $(PUSH_EXTRA_ARGS)
-	$(CONTAINER_TOOL) push $(MCP_KAFKA_IMG) $(PUSH_EXTRA_ARGS)
-	$(CONTAINER_TOOL) push $(MCP_AAP_IMG) $(PUSH_EXTRA_ARGS)
-	$(CONTAINER_TOOL) push $(MCP_SLACK_IMG) $(PUSH_EXTRA_ARGS)
-	$(CONTAINER_TOOL) push $(MCP_SERVICENOW_IMG) $(PUSH_EXTRA_ARGS)
+	@for image in $(CORE_BUILD_PUSH_IMAGES); do \
+		$(CONTAINER_TOOL) push $$image $(PUSH_EXTRA_ARGS); \
+	done
+
+.PHONY: print-all-images
+print-all-images:
+	@printf '%s\n' $(CORE_BUILD_PUSH_IMAGES)
 
 .PHONY: build-push-aap-mock
 build-push-aap-mock:
@@ -172,6 +208,19 @@ namespace:
 helm-depend:
 	cd hub/helm && helm dependency update
 
+.PHONY: check-adnr-llm-config
+check-adnr-llm-config:
+	@missing=""; \
+	[ -n "$(ADNR_LLM_ID)" ] || missing="$$missing ADNR_LLM_ID"; \
+	[ -n "$(ADNR_LLM_URL)" ] || missing="$$missing ADNR_LLM_URL"; \
+	[ -n "$(ADNR_LLM_TOKEN)" ] || missing="$$missing ADNR_LLM_TOKEN"; \
+	if [ -n "$$missing" ]; then \
+		echo "ERROR: Missing required ADNR LLM configuration:$$missing"; \
+		echo "Set ADNR_LLM_ID, ADNR_LLM_URL, and ADNR_LLM_TOKEN before running 'make helm-install'."; \
+		echo "See .env.example and docs/manual-deploy.md for the expected values."; \
+		exit 1; \
+	fi
+
 .PHONY: helm-install
 helm-install: namespace helm-depend
 ifeq ($(ENABLE_KAFKA),true)
@@ -180,6 +229,7 @@ endif
 ifeq ($(ENABLE_MINIO),true)
 	$(MAKE) minio-install
 endif
+	$(MAKE) milvus-install
 ifeq ($(ENABLE_AAP_MOCK),true)
 	$(MAKE) deploy-aap-mock
 endif
@@ -190,14 +240,15 @@ ifeq ($(ENABLE_SERVICENOW_MOCK),true)
 	$(MAKE) deploy-servicenow-mock
 endif
 ifeq ($(ENABLE_HUB),true)
-	@oc get secret noc-openshift-edge-kubeconfig -n $(NAMESPACE) > /dev/null 2>&1 || \
-		hub/mcp-servers/mcp-openshift/deploy/setup-edge-rbac.sh $(EDGE_NAMESPACE) $(NAMESPACE)
+	$(MAKE) check-adnr-llm-config
+	hub/mcp-servers/mcp-openshift/deploy/setup-edge-rbac.sh $(EDGE_NAMESPACE) $(NAMESPACE)
 	helm upgrade --install $(RELEASE) hub/helm \
 		--namespace $(NAMESPACE) \
 		--set image.registry=$(REGISTRY) \
 		--set image.chatbotService=noc-chatbot-service \
 		--set image.ingestionPipeline=noc-ingestion-pipeline \
 		--set image.agentService=noc-agent-service \
+		--set image.frontend=noc-frontend \
 		--set global.routes.enabled=$(ROUTES_ENABLED) \
 		--set image.tag=$(VERSION) \
 		$(helm_mcp_image_args) \
@@ -214,6 +265,7 @@ ifeq ($(ENABLE_HUB),true)
 else
 	@echo "ENABLE_HUB is not true — skipping hub chart deployment"
 endif
+	$(MAKE) autorag-install
 ifeq ($(ENABLE_LANGFUSE),true)
 	$(MAKE) _langfuse-deploy
 endif
@@ -247,12 +299,26 @@ ifeq ($(ENABLE_SERVICENOW_MOCK),true)
 	oc delete -n $(NAMESPACE) -f hub/infra/servicenow-mock/k8s.yaml --ignore-not-found
 endif
 endif
+	$(MAKE) autorag-uninstall
+	$(MAKE) milvus-uninstall
+	$(MAKE) edge-rbac-teardown
+	oc delete namespace $(EDGE_NAMESPACE) --ignore-not-found
+	oc delete namespace $(NAMESPACE) --ignore-not-found
 
 .PHONY: edge-rbac-teardown
 edge-rbac-teardown:
 	sed 's/EDGE_NAMESPACE_PLACEHOLDER/$(EDGE_NAMESPACE)/g' hub/mcp-servers/mcp-openshift/deploy/edge-rbac.yaml \
 		| oc delete -n $(EDGE_NAMESPACE) --ignore-not-found -f -
 	oc delete secret noc-openshift-edge-kubeconfig -n $(NAMESPACE) --ignore-not-found
+
+EDGE_WORKLOAD_IMAGE ?= registry.k8s.io/pause:3.10
+
+.PHONY: deploy-edge-workload
+deploy-edge-workload:
+	oc create namespace $(EDGE_NAMESPACE) 2>/dev/null ||:
+	oc create deployment edge-worker --image=$(EDGE_WORKLOAD_IMAGE) --replicas=1 -n $(EDGE_NAMESPACE) 2>/dev/null \
+		|| echo "edge-worker deployment already exists, skipping"
+	oc wait --for=condition=available deployment/edge-worker -n $(EDGE_NAMESPACE) --timeout=60s
 
 .PHONY: _langfuse-deploy
 _langfuse-deploy:
@@ -335,7 +401,8 @@ minio-uninstall:
 
 .PHONY: unit-tests
 unit-tests:
-	cd hub/agent-service && uv run pytest
+	cd hub/chatbot-service && uv sync --group dev && uv run pytest tests/ -o "addopts="
+	cd hub/agent-service && uv sync --group dev && uv run pytest
 	cd hub/mcp-servers/mcp-openshift && uv sync --group dev && uv run pytest
 	cd hub/mcp-servers/mcp-lokistack && uv sync --group dev && uv run pytest
 	cd hub/mcp-servers/mcp-aap && uv sync --group dev && AAP_USERNAME=test AAP_PASSWORD=test uv run pytest
@@ -354,6 +421,8 @@ ifeq ($(ENABLE_HUB),true)
 	PF3_PID=$$!; \
 	oc port-forward -n $(NAMESPACE) svc/llamastack 8321:8321 & \
 	PF10_PID=$$!; \
+	oc port-forward -n $(NAMESPACE) svc/adnr-autorag-service 8322:8321 & \
+	PF11_PID=$$!; \
 	PF4_PID=""; \
 	if [ "$(ENABLE_LOKISTACK)" = "true" ]; then \
 		oc port-forward -n $(NAMESPACE) svc/mcp-noc-lokistack 8002:8000 & \
@@ -369,9 +438,9 @@ ifeq ($(ENABLE_HUB),true)
 	PF8_PID=$$!; \
 	oc port-forward -n $(NAMESPACE) svc/hub-agent-service 8007:8001 & \
 	PF9_PID=$$!; \
-	trap "kill $$PF1_PID $$PF2_PID $$PF3_PID $$PF4_PID $$PF5_PID $$PF6_PID $$PF7_PID $$PF8_PID $$PF9_PID $$PF10_PID" EXIT; \
+	trap "kill $$PF1_PID $$PF2_PID $$PF3_PID $$PF4_PID $$PF5_PID $$PF6_PID $$PF7_PID $$PF8_PID $$PF9_PID $$PF10_PID $$PF11_PID" EXIT; \
 	sleep 2 && cd hub/integration-tests && \
-	AGENT_SERVICE_URL=http://localhost:8007 LLAMASTACK_URL=http://localhost:8321 ENABLE_LOKISTACK=$(ENABLE_LOKISTACK) EDGE_NAMESPACE=$(EDGE_NAMESPACE) uv run pytest
+	AGENT_SERVICE_URL=http://localhost:8007 LLAMASTACK_URL=http://localhost:8321 AUTORAG_URL=http://localhost:8322 ENABLE_LOKISTACK=$(ENABLE_LOKISTACK) EDGE_NAMESPACE=$(EDGE_NAMESPACE) uv run pytest
 else
 	@echo "ENABLE_HUB is not true — skipping hub integration tests"
 endif
@@ -444,6 +513,54 @@ langfuse-status:
 	@echo ""
 	@echo "=== Secrets ==="
 	oc get secret langfuse-secrets --namespace $(NAMESPACE) 2>/dev/null || echo "(none)"
+
+# ── AutoRAG / Milvus targets ─────────────────────────────────────
+
+.PHONY: milvus-install
+milvus-install:
+	helm upgrade --install $(MILVUS_RELEASE) $(MILVUS_CHART) \
+		--namespace $(NAMESPACE) \
+		--wait --timeout 10m
+
+.PHONY: milvus-uninstall
+milvus-uninstall:
+	helm uninstall $(MILVUS_RELEASE) --namespace $(NAMESPACE) --ignore-not-found
+	oc delete pvc milvus-pvc --namespace $(NAMESPACE) --ignore-not-found
+
+.PHONY: autorag-install
+autorag-install:
+	@test -n "$(ADNR_LLM_ID)" || { echo "ERROR: ADNR_LLM_ID is required for AutoRAG. Export it before running."; exit 1; }
+	@test -n "$(ADNR_LLM_URL)" || { echo "ERROR: ADNR_LLM_URL is required for AutoRAG. Export it before running."; exit 1; }
+	@test -n "$(ADNR_LLM_TOKEN)" || { echo "ERROR: ADNR_LLM_TOKEN is required for AutoRAG. Export it before running."; exit 1; }
+	helm upgrade --install $(AUTORAG_RELEASE) $(AUTORAG_CHART) \
+		--namespace $(NAMESPACE) \
+		--set-string inference.model='$(ADNR_LLM_ID)' \
+		--set-string inference.url='$(ADNR_LLM_URL)' \
+		--set-string inference.apiToken='$(ADNR_LLM_TOKEN)' \
+		--wait --timeout 10m \
+		$(AUTORAG_HELM_EXTRA_ARGS)
+	oc wait --for=condition=Ready pod -l app=milvus-standalone -n $(NAMESPACE) --timeout=180s
+	oc wait --for=condition=Ready pod -l app=etcd -n $(NAMESPACE) --timeout=180s
+	oc wait --for=condition=Ready pod -l app.kubernetes.io/instance=adnr-autorag -n $(NAMESPACE) --timeout=300s
+
+.PHONY: autorag-uninstall
+autorag-uninstall:
+	helm uninstall $(AUTORAG_RELEASE) --namespace $(NAMESPACE) --ignore-not-found
+	oc delete llamastackdistribution adnr-autorag --namespace $(NAMESPACE) --ignore-not-found
+
+.PHONY: autorag-status
+autorag-status:
+	@echo "=== Milvus ==="
+	oc get pods -l app=milvus-standalone --namespace $(NAMESPACE) 2>/dev/null || echo "(none)"
+	@echo ""
+	@echo "=== etcd ==="
+	oc get pods -l app=etcd --namespace $(NAMESPACE) 2>/dev/null || echo "(none)"
+	@echo ""
+	@echo "=== LlamaStackDistribution ==="
+	oc get llamastackdistribution --namespace $(NAMESPACE) 2>/dev/null || echo "(none)"
+	@echo ""
+	@echo "=== Llama Stack Pod ==="
+	oc get pods -l app.kubernetes.io/managed-by=llamastack-operator --namespace $(NAMESPACE) 2>/dev/null || echo "(none)"
 
 # ── ServiceNow PDI Bootstrap ────────────────────────────────
 

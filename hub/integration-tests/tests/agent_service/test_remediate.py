@@ -1,5 +1,6 @@
 INCIDENT_STATE_FIELDS = {
     "raw_event",
+    "kafka_offset",
     "log_event",
     "incident_id",
     "incident_start_ms",
@@ -19,6 +20,8 @@ INCIDENT_STATE_FIELDS = {
     "langfuse_trace_id",
     "total_duration_ms",
     "error_message",
+    "failed_attempts",
+    "should_retry",
 }
 
 
@@ -34,27 +37,43 @@ class TestRemediateRouting:
     def test_high_confidence_remediates(self, agent_service_client):
         response = agent_service_client.post(
             "/remediate",
-            json={"raw_event": "high confidence event", "confidence_override": 0.9},
+            json={
+                "raw_event": "high confidence event",
+                "confidence_override": 0.9,
+                "failure_type_override": "CrashLoopBackOff",
+            },
         )
         _assert_valid_remediation_response(response, "high confidence event", "remediate")
 
     def test_high_confidence_generation_type_routes_to_lightspeed(self, agent_service_client):
         response = agent_service_client.post(
             "/remediate",
-            json={"raw_event": "high confidence event", "confidence_override": 0.9, "failure_type_override": "KafkaLag"},
+            json={
+                "raw_event": "high confidence event",
+                "confidence_override": 0.9,
+                "failure_type_override": "KafkaLag",
+            },
         )
         _assert_valid_remediation_response(response, "high confidence event", "lightspeed")
 
     def test_mid_confidence_escalates(self, agent_service_client):
         response = agent_service_client.post(
             "/remediate",
-            json={"raw_event": "mid confidence event", "confidence_override": 0.75},
+            json={
+                "raw_event": "mid confidence event",
+                "confidence_override": 0.75,
+                "failure_type_override": "CrashLoopBackOff",
+            },
         )
         _assert_valid_remediation_response(response, "mid confidence event", "escalate")
 
     def test_low_confidence_escalates(self, agent_service_client):
         response = agent_service_client.post(
             "/remediate",
-            json={"raw_event": "low confidence event", "confidence_override": 0.5},
+            json={
+                "raw_event": "low confidence event",
+                "confidence_override": 0.5,
+                "failure_type_override": "CrashLoopBackOff",
+            },
         )
         _assert_valid_remediation_response(response, "low confidence event", "escalate")

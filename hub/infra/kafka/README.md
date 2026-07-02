@@ -143,6 +143,7 @@ Edit `hub/infra/kafka/values.yaml`:
 - **Disable external access**: Set `kafka.externalRoute.enabled: false`
 - **Add topics**: Add to `kafka.topics` list
 - **Resources**: Adjust `kafka.resources` for production
+- **JVM heap**: Set `kafka.jvmHeapOpts` when changing memory limits (image default is 1G)
 - **Storage**: Change `kafka.storage.size` or `storageClass`
 
 ## Production Checklist

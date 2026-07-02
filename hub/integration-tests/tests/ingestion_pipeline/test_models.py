@@ -1,12 +1,7 @@
 import os
 
 import pytest
-
-
-def sync_runbooks(ingestion_client):
-    response = ingestion_client.post("/runbooks/sync", timeout=30.0)
-    assert response.status_code == 200
-    return response.json()
+from common_helpers import sync_runbooks
 
 
 def test_models_list_not_empty(ingestion_client):
@@ -16,15 +11,30 @@ def test_models_list_not_empty(ingestion_client):
     assert len(data["models"]) > 0
 
 
+def test_sentence_transformers_model_registered(ingestion_client):
+    """Ingestion uses adnr-autorag for RAG; expect an embedding model there."""
+    response = ingestion_client.get("/models")
+    assert response.status_code == 200
+    data = response.json()
+    assert any(
+        "sentence-transformers" in model.get("provider_id", "")
+        or model.get("model_type") == "sentence-transformers"
+        or model.get("id", "").startswith("sentence-transformers/")
+        for model in data["models"]
+    )
+
+
 @pytest.mark.skipif(
     not os.environ.get("GITHUB_ACTIONS"),
     reason="adnr-llm model only provisioned in CI",
 )
-def test_adnr_llm_model_registered(ingestion_client):
-    response = ingestion_client.get("/models")
+def test_adnr_llm_model_registered(llamastack_client):
+    """Hub llamastack still serves the foundation LLM for chatbot/MCP."""
+    response = llamastack_client.get("/v1/models")
     assert response.status_code == 200
     data = response.json()
-    assert any(model.get("id", "").startswith("adnr-llm/") for model in data["models"])
+    models = data.get("data", data.get("models", data))
+    assert any(model.get("id", "").startswith("adnr-llm/") for model in models)
 
 
 def test_vector_store_endpoint_returns_summary(ingestion_client):
