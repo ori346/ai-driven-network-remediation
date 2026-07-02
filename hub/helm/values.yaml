@@ -6,6 +6,7 @@ image:
   chatbotService: hub-chatbot-service
   ingestionPipeline: hub-ingestion-pipeline
   agentService: hub-agent-service
+  frontend: noc-frontend
   pullPolicy: Always
   # Overrides the image tag whose default is the chart appVersion.
   tag: "0.0.1"
@@ -57,6 +58,10 @@ llama-stack:
 ingestionPipeline:
   replicaCount: 1
   vectorStoreName: noc_runbooks
+  llamastackHost: adnr-autorag-service
+  embeddingModel: sentence-transformers/nomic-ai/nomic-embed-text-v1.5
+  chunkSizeTokens: 800
+  chunkOverlapTokens: 80
   minio:
     bucket: runbooks
     secure: false
@@ -81,22 +86,64 @@ chatbotService:
     type: ClusterIP
     port: 80
     targetPort: 8080
+  env:
+    mcpOpenshiftUrl: "http://mcp-noc-openshift:8000"
+    mcpLokistackUrl: "http://mcp-noc-lokistack:8000"
+    mcpKafkaUrl: "http://mcp-noc-kafka:8000"
+    mcpAapUrl: "http://mcp-noc-aap:8000"
+    mcpSlackUrl: "http://mcp-noc-slack:8000"
+    mcpServicenowUrl: "http://mcp-noc-servicenow:8000"
+    # TODO: When real ServiceNow credentials are wired, use Secret references
+    # (secretKeyRef) rather than plain env values for username/password/API key.
+    servicenowUrl: "http://servicenow-mock:8080"
+    kafkaBootstrap: "kafka:9092"
+    modelApiUrl: "http://llamastack:8321/v1/completions"
+    modelName: "granite-4-h-tiny"
+    demoTopic: "system-alerts"
+    auditTopic: "incident-audit"
   resources: {}
   livenessProbe:
     httpGet:
-      path: /api/hello
+      path: /health
       port: 8080
     initialDelaySeconds: 5
     periodSeconds: 10
   readinessProbe:
     httpGet:
-      path: /api/hello
+      path: /ready
+      port: 8080
+    initialDelaySeconds: 10
+    periodSeconds: 10
+
+frontend:
+  replicaCount: 1
+  service:
+    type: ClusterIP
+    port: 80
+    targetPort: 8080
+  resources: {}
+  livenessProbe:
+    httpGet:
+      path: /
+      port: 8080
+    initialDelaySeconds: 5
+    periodSeconds: 10
+  readinessProbe:
+    httpGet:
+      path: /
       port: 8080
     initialDelaySeconds: 5
     periodSeconds: 10
 
 agentService:
   replicaCount: 1
+  granite:
+    modelName: "granite-4.0-8b"
+  env:
+    kafkaBootstrap: "kafka:9092"
+    kafkaGroupId: "dark-noc-agent"
+    kafkaAuditTopic: "incident-audit"
+    kafkaConsumerEnabled: "true"
   service:
     type: ClusterIP
     port: 8001

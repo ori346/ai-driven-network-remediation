@@ -29,6 +29,14 @@ runs:
       run: oc cluster-info
       shell: bash
 
+    - name: Install Llama Stack K8s operator
+      run: |
+        oc apply -k "https://github.com/ogx-ai/ogx-k8s-operator/config/default?ref=v0.9.0"
+        oc wait --for=condition=Available \
+          deployment/llama-stack-k8s-operator-controller-manager \
+          -n llama-stack-k8s-operator-system --timeout=180s
+      shell: bash
+
     - name: Build local images
       run: make build-all-images REGISTRY=localhost:5001
       shell: bash
@@ -38,10 +46,7 @@ runs:
       shell: bash
 
     - name: Create edge namespace with dummy workloads
-      run: |
-        oc create namespace dark-noc-edge
-        oc create deployment edge-worker --image=registry.k8s.io/pause:3.10 --replicas=1 -n dark-noc-edge
-        oc wait --for=condition=available deployment/edge-worker -n dark-noc-edge --timeout=60s
+      run: make deploy-edge-workload EDGE_NAMESPACE=dark-noc-edge
       shell: bash
 
     - name: Prepare in-cluster kubeconfig for edge namespace
@@ -63,6 +68,7 @@ runs:
       run: |
         make helm-install REGISTRY=localhost:5001 ROUTES_ENABLED=false ENABLE_KAFKA_UI=false \
           ENABLE_SERVICENOW_MOCK=true \
+          AUTORAG_HELM_EXTRA_ARGS="--set llamaStack.distributionImage=docker.io/ogxai/distribution-starter:1.1.2 --wait=false" \
           HELM_EXTRA_ARGS="\
             --set-file mcpSecrets.openshift.kubeconfig=/tmp/edge-kubeconfig \
             --set mcp-servers.mcp-servers.noc-lokistack.enabled=false \
@@ -76,7 +82,8 @@ runs:
             --set kafka.resources.requests.cpu=100m \
             --set kafka.resources.requests.memory=256Mi \
             --set kafka.resources.limits.cpu=500m \
-            --set kafka.resources.limits.memory=512Mi"
+            --set kafka.resources.limits.memory=512Mi \
+            --set-string kafka.jvmHeapOpts='-Xmx384m -Xms256m'"
       shell: bash
 
     - name: Wait for Kafka topics to be created
