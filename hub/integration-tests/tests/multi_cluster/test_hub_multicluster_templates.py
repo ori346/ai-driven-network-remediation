@@ -28,9 +28,7 @@ def _helm_available() -> bool:
         return False
 
 
-pytestmark = pytest.mark.skipif(
-    not _helm_available(), reason="helm CLI not available"
-)
+pytestmark = pytest.mark.skipif(not _helm_available(), reason="helm CLI not available")
 
 
 def _render_spokes_values(cluster_count: int) -> Path:
@@ -66,8 +64,7 @@ def _helm_template(values_file: Path, *extra_sets: str) -> str:
     ]
     result = subprocess.run(cmd, capture_output=True, text=True, check=False)
     assert result.returncode == 0, (
-        f"helm template failed ({result.returncode}):\n"
-        f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+        f"helm template failed ({result.returncode}):\n" f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
     )
     assert result.stdout.strip(), "helm template produced empty output"
     return result.stdout
@@ -101,12 +98,12 @@ def test_hub_spoke_renders_multi_cluster_creds_job():
     secrets_blocks = [
         block
         for block in rendered.split("- apiGroups:")
-        if 'resources: ["secrets"]' in block or "resources: [\"secrets\"]" in block
+        if 'resources: ["secrets"]' in block or 'resources: ["secrets"]' in block
     ]
     assert secrets_blocks, "expected secrets RBAC rules in rendered manifests"
     for block in secrets_blocks:
         if "resourceNames:" in block:
-            assert 'verbs: ["get"]' in block or "verbs: [\"get\"]" in block
+            assert 'verbs: ["get"]' in block or 'verbs: ["get"]' in block
             assert 'verbs: ["get", "list"]' not in block
     # Hub-spoke must not emit the same-cluster edge RBAC hook.
     assert "templates/edge-rbac-job.yaml" not in rendered

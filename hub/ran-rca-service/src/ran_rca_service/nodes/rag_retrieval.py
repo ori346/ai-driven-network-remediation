@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 from loguru import logger
-from shared.rag import RagClient
-
 from ran_rca_service.config import LLAMASTACK_HOST, LLAMASTACK_PORT, VECTOR_STORE_NAME
 from ran_rca_service.models import RCAState
+from shared.rag import RagClient
 
 _rag_client: RagClient | None = None
 

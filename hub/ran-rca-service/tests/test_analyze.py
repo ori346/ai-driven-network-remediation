@@ -7,7 +7,6 @@ from unittest.mock import AsyncMock, patch
 
 import jsonschema
 import pytest
-
 from helpers import CONTRACTS_DIR, make_llm_response, make_state, project_enriched
 
 

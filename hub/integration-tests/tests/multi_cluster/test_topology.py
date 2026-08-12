@@ -83,7 +83,7 @@ def test_render_values_yaml_two_spokes():
     assert "siteId: edge-02" in text
     assert "secretName: noc-openshift-kubeconfig-edge-site-01" in text
     assert "secretName: noc-openshift-kubeconfig-edge-site-02" in text
-    assert 'mountPath: /kubeconfigs/edge-site-01' in text
+    assert "mountPath: /kubeconfigs/edge-site-01" in text
     assert 'KUBECONFIG_DIR: "/kubeconfigs"' in text
     assert 'DEPLOYMENT_MODE: "hub-spoke"' in text
     assert "serviceAccountName: mcp-noc-openshift" in text

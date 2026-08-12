@@ -47,10 +47,14 @@ class _FakeKafkaConsumer:
         self._poll_count = 0
         self._deliver_on_call = deliver_on_call
         self._delivered = False
-        self._messages = messages if messages is not None else [
-            _FakeMessage(0, json.dumps(_SAMPLE_ANOMALY_1)),
-            _FakeMessage(1, json.dumps(_SAMPLE_ANOMALY_2)),
-        ]
+        self._messages = (
+            messages
+            if messages is not None
+            else [
+                _FakeMessage(0, json.dumps(_SAMPLE_ANOMALY_1)),
+                _FakeMessage(1, json.dumps(_SAMPLE_ANOMALY_2)),
+            ]
+        )
 
     def poll(self, timeout_ms: int = 1000):
         self._poll_count += 1

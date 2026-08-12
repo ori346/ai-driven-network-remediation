@@ -5,7 +5,6 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-
 from shared.rag import RagClient
 
 
@@ -32,9 +31,7 @@ class TestSearch:
         mock_content_2 = MagicMock(text="Doc: verify power settings")
         mock_item_1 = MagicMock(content=[mock_content_1])
         mock_item_2 = MagicMock(content=[mock_content_2])
-        mock_llamastack.vector_stores.search = AsyncMock(
-            return_value=MagicMock(data=[mock_item_1, mock_item_2])
-        )
+        mock_llamastack.vector_stores.search = AsyncMock(return_value=MagicMock(data=[mock_item_1, mock_item_2]))
 
         result = await rag_client.search("test query")
 
@@ -137,9 +134,7 @@ class TestUploadFile:
         mock_llamastack.files.create = AsyncMock(return_value=mock_file)
         mock_llamastack.vector_stores.files.create = AsyncMock()
 
-        await rag_client.upload_file(
-            "test.md", b"content", chunk_size_tokens=1024, chunk_overlap_tokens=128
-        )
+        await rag_client.upload_file("test.md", b"content", chunk_size_tokens=1024, chunk_overlap_tokens=128)
 
         call = mock_llamastack.vector_stores.files.create.call_args
         strategy = call.kwargs["chunking_strategy"]
@@ -151,18 +146,14 @@ class TestErrorHandling:
     @pytest.mark.asyncio
     async def test_search_error_propagates(self, rag_client, mock_llamastack):
         rag_client._vector_store_id = "vs-123"
-        mock_llamastack.vector_stores.search = AsyncMock(
-            side_effect=ConnectionError("LlamaStack unreachable")
-        )
+        mock_llamastack.vector_stores.search = AsyncMock(side_effect=ConnectionError("LlamaStack unreachable"))
 
         with pytest.raises(ConnectionError):
             await rag_client.search("test query")
 
     @pytest.mark.asyncio
     async def test_list_error_propagates(self, rag_client, mock_llamastack):
-        mock_llamastack.vector_stores.list = AsyncMock(
-            side_effect=ConnectionError("LlamaStack unreachable")
-        )
+        mock_llamastack.vector_stores.list = AsyncMock(side_effect=ConnectionError("LlamaStack unreachable"))
 
         with pytest.raises(ConnectionError):
             await rag_client.search("test query")

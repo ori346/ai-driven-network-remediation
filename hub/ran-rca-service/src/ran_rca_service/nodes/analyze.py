@@ -6,7 +6,6 @@ import json
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from loguru import logger
-
 from ran_rca_service.config import get_llm
 from ran_rca_service.models import RCAState
 

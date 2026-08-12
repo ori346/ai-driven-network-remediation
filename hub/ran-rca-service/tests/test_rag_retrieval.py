@@ -5,7 +5,6 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 from helpers import make_state
 from ran_rca_service.nodes.rag_retrieval import rag_retrieval_node
 

@@ -83,9 +83,7 @@ class DemoTriggerRequest(BaseModel):
 
 async def _build_integrations() -> dict[str, Any]:
     """Probe all services and compute SLO/incident data."""
-    probes = await asyncio.gather(
-        *(probe_http(t["probe_url"], verify=SSL_VERIFY) for t in INTEGRATION_TARGETS)
-    )
+    probes = await asyncio.gather(*(probe_http(t["probe_url"], verify=SSL_VERIFY) for t in INTEGRATION_TARGETS))
 
     integrations: list[dict[str, Any]] = []
     up_count = 0

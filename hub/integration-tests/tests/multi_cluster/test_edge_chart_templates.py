@@ -31,9 +31,7 @@ def _helm_available() -> bool:
         return False
 
 
-pytestmark = pytest.mark.skipif(
-    not _helm_available(), reason="helm CLI not available"
-)
+pytestmark = pytest.mark.skipif(not _helm_available(), reason="helm CLI not available")
 
 
 def _helm_template(*extra_sets: str) -> str:
@@ -47,8 +45,7 @@ def _helm_template(*extra_sets: str) -> str:
     ]
     result = subprocess.run(cmd, capture_output=True, text=True, check=False)
     assert result.returncode == 0, (
-        f"helm template failed ({result.returncode}):\n"
-        f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+        f"helm template failed ({result.returncode}):\n" f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
     )
     assert result.stdout.strip(), "helm template produced empty output"
     return result.stdout

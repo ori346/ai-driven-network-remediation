@@ -7,9 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import jsonschema
 import pytest
-
 from helpers import CONTRACTS_DIR, SAMPLE_ANOMALY, make_anomaly, make_llm_response
-
 from ran_rca_service.graph import build_graph
 
 

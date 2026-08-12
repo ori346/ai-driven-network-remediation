@@ -30,7 +30,7 @@ def test_appproject_restricts_edge_destinations_and_resources():
     assert "kind: ClusterLogForwarder" in text
     assert "kind: Deployment" in text
     assert "sourceRepos:" in text
-    assert "name: \"*\"" in text
+    assert 'name: "*"' in text
 
 
 def test_applicationset_list_generator_and_site_id_params():

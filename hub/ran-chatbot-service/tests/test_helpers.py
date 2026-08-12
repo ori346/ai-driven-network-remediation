@@ -108,9 +108,7 @@ class TestCallModel:
         """Regression test for the shared-client change: calling call_model() twice
         with the same client (as concurrent /api/chat requests now do) must not
         raise or corrupt state — httpx.AsyncClient is designed for exactly this."""
-        route = respx.post(MODEL_API_URL).mock(
-            return_value=httpx.Response(200, json={"choices": [{"text": "ok"}]})
-        )
+        route = respx.post(MODEL_API_URL).mock(return_value=httpx.Response(200, json={"choices": [{"text": "ok"}]}))
         async with httpx.AsyncClient() as client:
             first = await call_model("prompt one", client)
             second = await call_model("prompt two", client)

@@ -6,7 +6,6 @@ import asyncio
 import json
 
 import click
-
 from ran_rca_service.graph import build_graph
 
 _SAMPLE_ANOMALY = {

@@ -57,9 +57,7 @@ def validate_topology(
     messages: list[str] = []
     try:
         mode = deployment_mode_for(cluster_count)
-        spokes = build_spokes(
-            cluster_count, prefix=spoke_name_prefix, namespace=edge_namespace
-        )
+        spokes = build_spokes(cluster_count, prefix=spoke_name_prefix, namespace=edge_namespace)
     except ValueError as exc:
         return False, [f"ERROR: {exc}"], {}
 
@@ -87,9 +85,7 @@ def validate_topology(
         if not gitops_revision:
             missing.append("GITOPS_REVISION")
         if missing:
-            messages.append(
-                "ERROR: hub-spoke mode requires: " + ", ".join(missing)
-            )
+            messages.append("ERROR: hub-spoke mode requires: " + ", ".join(missing))
             return False, messages, summary
 
         if not skip_oc_check:

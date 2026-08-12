@@ -13,7 +13,6 @@ from fastapi import FastAPI, Query, Request
 from fastapi.responses import JSONResponse
 from kafka import KafkaProducer
 from loguru import logger
-
 from ran_rca_service.config import (
     KAFKA_ANOMALIES_TOPIC,
     KAFKA_BOOTSTRAP,

@@ -17,9 +17,9 @@ from ran_anomaly_detector.config import (
     KAFKA_ANOMALIES_TOPIC,
     KAFKA_BOOTSTRAP,
     KAFKA_CONSUMER_ENABLED,
-    KAFKA_PRODUCER_ENABLED,
     KAFKA_GROUP_ID,
     KAFKA_METRICS_TOPIC,
+    KAFKA_PRODUCER_ENABLED,
     RECENT_ANOMALIES_LIMIT,
 )
 from ran_anomaly_detector.detection import AnomalyDetectionService

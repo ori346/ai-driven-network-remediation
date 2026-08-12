@@ -42,9 +42,7 @@ class TopicConsumer:
         if self._running:
             return
         self._running = True
-        self._thread = threading.Thread(
-            target=self._run, name=f"{self._name}-consumer", daemon=True
-        )
+        self._thread = threading.Thread(target=self._run, name=f"{self._name}-consumer", daemon=True)
         self._thread.start()
         logger.info(
             "Kafka {} consumer started topic={} group_id={}",
@@ -101,9 +99,7 @@ class TopicConsumer:
                 )
                 return True
             except Exception:
-                logger.warning(
-                    "Kafka not reachable at {}, retrying in 5s", self._bootstrap_servers
-                )
+                logger.warning("Kafka not reachable at {}, retrying in 5s", self._bootstrap_servers)
                 self._stop_event.wait(5)
         return False
 

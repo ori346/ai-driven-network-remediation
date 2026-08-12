@@ -33,6 +33,7 @@ def get_llm() -> ChatOpenAI:
         )
     return _llm
 
+
 # Kafka
 KAFKA_BOOTSTRAP = os.getenv("KAFKA_BOOTSTRAP", "kafka:9092")
 KAFKA_ANOMALIES_TOPIC = os.getenv("KAFKA_ANOMALIES_TOPIC", "ran-anomalies")

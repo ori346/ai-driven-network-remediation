@@ -119,8 +119,7 @@ def format_chat_reply(
         # so the newest/latest anomaly is the last element, not the first.
         latest = anomalies[-1]
         cells_line = (
-            f"- Latest anomaly: Cell {latest.cell_id} ({latest.band}) "
-            f"[{latest.anomaly_type}] — {latest.anomaly}"
+            f"- Latest anomaly: Cell {latest.cell_id} ({latest.band}) " f"[{latest.anomaly_type}] — {latest.anomaly}"
         )
         # See _format_anomalies: root_cause/recommended_fix can be present-but-empty.
         root_cause = latest.root_cause or "n/a"

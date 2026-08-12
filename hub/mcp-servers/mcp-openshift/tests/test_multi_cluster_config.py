@@ -5,7 +5,6 @@ from __future__ import annotations
 from unittest.mock import patch
 
 import pytest
-
 from mcp_openshift.config import resolve_kubeconfig, site_id_to_spoke_name
 from mcp_openshift.tools import get_pods
 
@@ -101,9 +100,7 @@ def test_get_pods_passes_resolved_spoke_kubeconfig(mock_oc, tmp_path):
         "success": True,
     }
 
-    with patch(
-        "mcp_openshift.tools.resolve_kubeconfig", return_value=str(kc)
-    ) as mock_resolve:
+    with patch("mcp_openshift.tools.resolve_kubeconfig", return_value=str(kc)) as mock_resolve:
         result = get_pods(namespace="dark-noc-edge", edge_site_id="edge-01")
 
     assert result["count"] == 0

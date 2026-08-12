@@ -7,7 +7,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
-
 from helpers import SAMPLE_ANOMALY
 from ran_rca_service.server import _handle_anomaly_message, app
 
@@ -57,9 +56,7 @@ class TestAnomaliesEndpoint:
         assert response.json() == {"count": 0, "anomalies": []}
 
     def test_anomalies_returns_enriched_items(self, client):
-        client.app.state.recent_enriched.append(
-            {**SAMPLE_ANOMALY, "root_cause": "stub", "recommended_fix": "stub"}
-        )
+        client.app.state.recent_enriched.append({**SAMPLE_ANOMALY, "root_cause": "stub", "recommended_fix": "stub"})
 
         response = client.get("/anomalies")
         body = response.json()
@@ -69,7 +66,14 @@ class TestAnomaliesEndpoint:
     def test_anomalies_respects_limit(self, client):
         for i in range(5):
             client.app.state.recent_enriched.append(
-                {"cell_id": i, "band": "Band 29", "anomaly_type": "X", "anomaly": "x", "root_cause": "r", "recommended_fix": "f"}
+                {
+                    "cell_id": i,
+                    "band": "Band 29",
+                    "anomaly_type": "X",
+                    "anomaly": "x",
+                    "root_cause": "r",
+                    "recommended_fix": "f",
+                }
             )
 
         response = client.get("/anomalies", params={"limit": 2})
@@ -78,9 +82,7 @@ class TestAnomaliesEndpoint:
         assert [a["cell_id"] for a in body["anomalies"]] == [3, 4]
 
     def test_anomalies_limit_zero_returns_empty(self, client):
-        client.app.state.recent_enriched.append(
-            {**SAMPLE_ANOMALY, "root_cause": "r", "recommended_fix": "f"}
-        )
+        client.app.state.recent_enriched.append({**SAMPLE_ANOMALY, "root_cause": "r", "recommended_fix": "f"})
 
         response = client.get("/anomalies", params={"limit": 0})
         body = response.json()
@@ -93,13 +95,15 @@ class TestHandleAnomalyMessage:
         from collections import deque
 
         graph = MagicMock()
-        graph.ainvoke = AsyncMock(return_value={
-            **SAMPLE_ANOMALY,
-            "context_snippets": [],
-            "rag_query_used": SAMPLE_ANOMALY["anomaly"],
-            "root_cause": "stub root cause",
-            "recommended_fix": "stub fix",
-        })
+        graph.ainvoke = AsyncMock(
+            return_value={
+                **SAMPLE_ANOMALY,
+                "context_snippets": [],
+                "rag_query_used": SAMPLE_ANOMALY["anomaly"],
+                "root_cause": "stub root cause",
+                "recommended_fix": "stub fix",
+            }
+        )
         producer = MagicMock()
         buffer: deque = deque(maxlen=100)
 
@@ -114,13 +118,15 @@ class TestHandleAnomalyMessage:
         from collections import deque
 
         graph = MagicMock()
-        graph.ainvoke = AsyncMock(return_value={
-            **SAMPLE_ANOMALY,
-            "context_snippets": [],
-            "rag_query_used": "",
-            "root_cause": "cause",
-            "recommended_fix": "fix",
-        })
+        graph.ainvoke = AsyncMock(
+            return_value={
+                **SAMPLE_ANOMALY,
+                "context_snippets": [],
+                "rag_query_used": "",
+                "root_cause": "cause",
+                "recommended_fix": "fix",
+            }
+        )
         producer = MagicMock()
         buffer: deque = deque(maxlen=100)
 
@@ -151,13 +157,15 @@ class TestHandleAnomalyMessage:
         from collections import deque
 
         graph = MagicMock()
-        graph.ainvoke = AsyncMock(return_value={
-            **SAMPLE_ANOMALY,
-            "context_snippets": [],
-            "rag_query_used": "",
-            "root_cause": "cause",
-            "recommended_fix": "fix",
-        })
+        graph.ainvoke = AsyncMock(
+            return_value={
+                **SAMPLE_ANOMALY,
+                "context_snippets": [],
+                "rag_query_used": "",
+                "root_cause": "cause",
+                "recommended_fix": "fix",
+            }
+        )
         buffer: deque = deque(maxlen=100)
 
         raw = json.dumps(SAMPLE_ANOMALY).encode("utf-8")

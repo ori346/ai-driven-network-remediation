@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from langgraph.graph import END, START, StateGraph
-
 from ran_rca_service.models import RCAState
 from ran_rca_service.nodes.analyze import analyze_node
 from ran_rca_service.nodes.rag_retrieval import rag_retrieval_node

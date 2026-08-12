@@ -20,10 +20,7 @@ def deployment_mode_for(cluster_count: int) -> str:
 
 def _require_safe_scalar(name: str, value: str) -> str:
     if not value or not _SAFE_YAML_SCALAR.match(value):
-        raise ValueError(
-            f"{name} must be a non-empty DNS-like token "
-            f"(letters, digits, ., _, -); got {value!r}"
-        )
+        raise ValueError(f"{name} must be a non-empty DNS-like token " f"(letters, digits, ., _, -); got {value!r}")
     return value
 
 
