@@ -1,0 +1,33 @@
+import { useMemo } from "react";
+import { usePolling } from "./hooks/usePolling";
+import { DegradedBanner } from "./components/DegradedBanner";
+import { HeaderMetrics } from "./components/HeaderMetrics";
+import { AnomalyTable } from "./components/AnomalyTable";
+import { DemoTrigger } from "./components/DemoTrigger";
+import { ChatPanel } from "./components/ChatPanel";
+
+function getBaseUrl() {
+  if (
+    typeof import.meta !== "undefined" &&
+    import.meta.env &&
+    import.meta.env.VITE_RAN_CHATBOT_URL
+  ) {
+    return import.meta.env.VITE_RAN_CHATBOT_URL.replace(/\/+$/, "");
+  }
+  return "";
+}
+
+export default function App() {
+  const baseUrl = useMemo(getBaseUrl, []);
+  const { anomalies, count, deps, lastUpdated, speedUpPolling, refetchNow } = usePolling(baseUrl);
+
+  return (
+    <main className="page">
+      <DegradedBanner deps={deps} />
+      <HeaderMetrics anomalies={anomalies} count={count} deps={deps} lastUpdated={lastUpdated} />
+      <DemoTrigger baseUrl={baseUrl} onTriggered={speedUpPolling} />
+      <AnomalyTable anomalies={anomalies} baseUrl={baseUrl} onCleared={refetchNow} />
+      <ChatPanel baseUrl={baseUrl} />
+    </main>
+  );
+}

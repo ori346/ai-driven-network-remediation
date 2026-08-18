@@ -2,7 +2,21 @@
 
 Thin conversational entrypoint (FastAPI BFF) for the Telco O-RAN anomaly detection and root
 cause analysis use case. Exposes `POST /api/chat` so operators can ask about recently detected
-RAN cell anomalies, their likely root cause, and the recommended fix, in natural language.
+RAN cell anomalies, their likely root cause, and the recommended fix, in natural language. Also
+exposes `GET /api/anomalies` so a UI can render the current anomaly list directly, without going
+through chat; `DELETE /api/anomalies` to clear that list for a clean demo/UI state; and
+`POST /api/demo/trigger` to inject a synthetic reading into the real pipeline for demos.
+
+## Endpoints
+
+| Path | Method | Purpose |
+|---|---|---|
+| `/health` | GET | Liveness probe |
+| `/ready` | GET | Readiness (Kafka + LLM dependency status, always returns 200) |
+| `/api/chat` | POST | Conversational reply grounded in recently detected anomalies |
+| `/api/anomalies` | GET | Recent enriched anomalies (in-memory buffer), newest first |
+| `/api/anomalies` | DELETE | Clear the in-memory anomaly buffer |
+| `/api/demo/trigger` | POST | Publish a synthetic RAN KPI reading to `ran-combined-metrics` for demos |
 
 This service is a **thin channel layer**: it does not detect anomalies or perform root cause
 analysis itself. That domain logic lives in [`ran-anomaly-detector`](../ran-anomaly-detector)
@@ -27,14 +41,19 @@ started at app startup (see the `lifespan` in
 `ENRICHED_ANOMALIES_TOPIC` (`ran-anomalies-enriched` by default, see
 [`config.py`](src/ran_chatbot_service/config.py)) and continuously fills an in-memory buffer
 (`deque(maxlen=ENRICHED_ANOMALIES_MAX_MESSAGES)`) — the same pattern already used by
-[`ran-anomaly-detector`](../ran-anomaly-detector)'s `MetricsConsumer`. `POST /api/chat` just reads
-that buffer directly: no per-request Kafka I/O, unlike the older per-request
-`fetch_recent_audits()`-style approach `hub/chatbot-service` uses. On connect (and every
+[`ran-anomaly-detector`](../ran-anomaly-detector)'s `MetricsConsumer`. Both `POST /api/chat` and
+`GET /api/anomalies` just read that buffer directly: no per-request Kafka I/O, unlike the older
+per-request `fetch_recent_audits()`-style approach `hub/chatbot-service` uses. On connect (and every
 reconnect), it seeks each partition back a bounded window and drains it so the buffer has recent
 history immediately, rather than only filling in as new anomalies trickle in. It intentionally
 does **not** use a Kafka consumer group — the topic has multiple partitions, and a shared group
 would split them across replicas if this service is ever scaled beyond one, so each replica stays
 group-less and independently sees the full topic.
+
+`DELETE /api/anomalies` clears that in-memory buffer directly (`deque.clear()`) for a clean
+demo/UI state. It does **not** survive a restart or Kafka reconnect: `_seed_recent_history()`
+re-drains the same recent window from `ran-anomalies-enriched` (7-day retention by default) on
+every (re)connect, so anomalies still on that topic will resurface then.
 
 That topic is populated by [`ran-rca-service`](../ran-rca-service) (LLM root cause analysis + RAG-
 based recommended fix), which enriches each anomaly detected by
@@ -51,6 +70,28 @@ this output contract (`contracts/ran-anomaly-enriched.schema.json`):
   "recommended_fix": "Refer to Baicells documentation Section 4.2, Page 15 — Antenna Tilt Adjustment"
 }
 ```
+
+## Demo trigger
+
+[`demo.py`](src/ran_chatbot_service/demo.py) builds a single-row CSV reading matching
+[`ran-anomaly-detector`](../ran-anomaly-detector)'s `csv_mapper.py` column format and publishes it
+straight to `DEMO_METRICS_TOPIC` (`ran-combined-metrics` by default) — the same real input topic
+real KPI data arrives on. This service never talks to `ran-anomaly-detector` directly: everything
+downstream (detection -> RCA -> this service's own `AnomaliesConsumer` buffer) is the already-
+running real pipeline, exactly like `hub/chatbot-service`'s `POST /api/demo/trigger` publishes
+straight to `system-alerts` rather than calling `agent-service`.
+
+Two scenarios, using reserved `cell_id`s (`9001`/`9002`) and `city: "Demo City"` so they're
+unmistakably synthetic in the UI:
+
+| Scenario | Fires | Notes |
+|---|---|---|
+| `low_signal` (default) | `LowRsrp` only | Clean single-anomaly demo (`rsrp=-125.0` dBm) |
+| `cell_outage` | `CellOutage` + `LowRsrp` + `SinrDegradation` | All three fire off one reading; each gets its own RCA pass, so expect them to appear over ~45-60s, not all at once |
+
+**Prerequisite:** `ran-anomaly-detector` must actually be running for the trigger to have any
+downstream effect (`ranAnomalyDetector.enabled` in Helm, off by default on fresh installs — see
+`docs/RAN-DEMO-SCRIPT.md`).
 
 ## Usage
 

@@ -7,6 +7,7 @@ image:
   ranAnomalyDetector: hub-ran-anomaly-detector
   ranRcaService: hub-ran-rca-service
   ranChatbotService: hub-ran-chatbot-service
+  ranFrontend: hub-ran-frontend
   frontend: noc-frontend
   pullPolicy: Always
   tag: "0.0.1"
@@ -312,13 +313,18 @@ aapCredential:
   # RHACM multicluster: route cluster access through ACM hub proxy.
   # Creates an AAP Custom Credential Type + credential instead of a per-cluster SA.
   # Prerequisites (user-managed): RHACM 2.9+, ManagedServiceAccount addon,
-  # hub ServiceAccount with multicluster RBAC, cluster-proxy route.
+  # cluster-proxy route. Spoke RBAC for the hub SA is provisioned by the chart
+  # (aap-multicluster-rbac.yaml).
   multicluster:
     enabled: false
     clusterProxyUrl: ""
     hubToken: ""
     credentialTypeName: "RHACM Cluster Proxy"
     credentialName: "rhacm-hub"
+    # Identity whose token is supplied in hubToken; granted spoke RBAC via a
+    # per-spoke ClusterPermission (aap-multicluster-rbac.yaml).
+    hubServiceAccountNamespace: "aap"
+    hubServiceAccountName: "aap-integration-serviceaccount"
 
 # ══════════════════════════════════════════════════════════════════════
 # Hub application services
@@ -354,6 +360,8 @@ ingestionPipeline:
     periodSeconds: 10
 
 chatbotService:
+  prompts:
+    chatSystem: ""
   replicaCount: 1
   service:
     type: ClusterIP
@@ -406,6 +414,9 @@ frontend:
     periodSeconds: 10
 
 agentService:
+  prompts:
+    analyzeSystem: ""
+    investigateSystem: ""
   replicaCount: 1
   granite:
     # make helm-install overrides this to adnr-llm/<ADNR_LLM_ID> when LLM env is set.
@@ -538,6 +549,7 @@ ranChatbotService:
   env:
     kafkaBootstrap: "kafka:9092"
     enrichedAnomaliesTopic: "ran-anomalies-enriched"
+    demoMetricsTopic: "ran-combined-metrics"
     modelApiUrl: "http://llamastack-service:8321/v1/completions"
     modelName: "granite-4-h-tiny"
     corsOrigins: "http://localhost:3000"
@@ -557,6 +569,32 @@ ranChatbotService:
       path: /ready
       port: 8003
     initialDelaySeconds: 10
+    periodSeconds: 10
+
+ranFrontend:
+  # Off by default, same as ranAnomalyDetector above: without the detector
+  # running, this webapp would just show an empty dashboard with a demo
+  # trigger that has no visible effect. Enable both together via
+  # ENABLE_RAN_ANOMALY=true (make) or --set ranAnomalyDetector.enabled=true
+  # --set ranFrontend.enabled=true.
+  enabled: false
+  replicaCount: 1
+  service:
+    type: ClusterIP
+    port: 80
+    targetPort: 8080
+  resources: {}
+  livenessProbe:
+    httpGet:
+      path: /
+      port: 8080
+    initialDelaySeconds: 5
+    periodSeconds: 10
+  readinessProbe:
+    httpGet:
+      path: /
+      port: 8080
+    initialDelaySeconds: 5
     periodSeconds: 10
 
 # ══════════════════════════════════════════════════════════════════════

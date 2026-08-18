@@ -13,13 +13,17 @@ fills an in-memory buffer from that topic; request handlers just read the
 buffer directly, with no per-request Kafka I/O.
 
 Endpoints:
-  GET  /health   - Liveness probe
-  GET  /ready     - Readiness probe (Kafka + LLM dependency status)
-  POST /api/chat  - RAN anomaly chat backed by an LLM with anomaly context
+  GET    /health           - Liveness probe
+  GET    /ready             - Readiness probe (Kafka + LLM dependency status)
+  GET    /api/anomalies     - Recent enriched anomalies, newest first
+  DELETE /api/anomalies     - Clear the in-memory anomaly buffer
+  POST   /api/chat          - RAN anomaly chat backed by an LLM with anomaly context
+  POST   /api/demo/trigger  - Publish a synthetic RAN KPI reading to the real pipeline
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections import deque
 from contextlib import asynccontextmanager
@@ -27,6 +31,7 @@ from contextlib import asynccontextmanager
 import httpx
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from shared.probes import probe_http
 from shared.utils import build_deps, normalize_session_id, utc_now
@@ -35,6 +40,7 @@ from .chat import build_chat_context, call_model, format_chat_reply
 from .config import (
     APP_VERSION,
     CORS_ORIGINS,
+    DEMO_METRICS_TOPIC,
     ENRICHED_ANOMALIES_MAX_MESSAGES,
     ENRICHED_ANOMALIES_TOPIC,
     KAFKA_BOOTSTRAP,
@@ -43,6 +49,7 @@ from .config import (
     MODEL_TIMEOUT_SECONDS,
     SSL_VERIFY,
 )
+from .demo import DEFAULT_SCENARIO, build_demo_csv, publish_demo_metrics
 from .kafka import AnomaliesConsumer
 from .models import EnrichedAnomaly, ModelSource
 
@@ -102,6 +109,10 @@ class ChatRequest(BaseModel):
     session_id: str | None = None
 
 
+class DemoTriggerRequest(BaseModel):
+    scenario: str = DEFAULT_SCENARIO
+
+
 # ── Endpoints ─────────────────────────────────────────────────────
 
 
@@ -124,6 +135,86 @@ async def ready(request: Request):
     checks["llm"] = llm_probe["reachable"]
 
     return {"status": "ready", "checks": checks}
+
+
+@app.get("/api/anomalies")
+def anomalies(request: Request) -> dict:
+    """Recently detected RAN anomalies, newest first.
+
+    Reads the same in-memory buffer /api/chat uses for LLM context — an
+    instant operation, no Kafka I/O on the request path.
+    """
+    # The buffer is in ascending Kafka offset order (oldest first, see kafka.py),
+    # so reversing it puts the newest anomaly first for display.
+    recent = list(reversed(request.app.state.recent_anomalies))
+    kafka_ok = request.app.state.kafka_consumer.is_connected
+
+    return {
+        "_deps": build_deps({"kafka": kafka_ok}),
+        "count": len(recent),
+        "anomalies": [a.model_dump() for a in recent],
+    }
+
+
+@app.delete("/api/anomalies")
+def clear_anomalies(request: Request) -> dict:
+    """Clear the in-memory anomaly buffer, e.g. for a clean demo/UI state.
+
+    Only clears what's currently buffered in this process. It does not
+    survive a restart or Kafka reconnect: AnomaliesConsumer's
+    _seed_recent_history() re-drains the same recent window from
+    ran-anomalies-enriched (7-day retention by default) every time it
+    (re)connects, so old anomalies still on that topic will resurface then.
+    """
+    request.app.state.recent_anomalies.clear()
+    kafka_ok = request.app.state.kafka_consumer.is_connected
+
+    return {
+        "_deps": build_deps({"kafka": kafka_ok}),
+        "status": "cleared",
+        "count": 0,
+    }
+
+
+@app.post("/api/demo/trigger")
+async def trigger_demo(req: DemoTriggerRequest, request: Request) -> dict:
+    """Publish a synthetic RAN KPI reading straight to ran-combined-metrics —
+    the same real input topic ran-anomaly-detector consumes from. Everything
+    downstream (detection -> RCA -> this service's own buffer) is the real,
+    already-running pipeline; this only injects one fresh reading into it.
+    """
+    csv_blob, meta = build_demo_csv(req.scenario)
+    try:
+        offset = await asyncio.to_thread(publish_demo_metrics, csv_blob)
+    except Exception:
+        # Don't expose str(exc) to the client: Kafka producer failures (e.g.
+        # NoBrokersAvailable, KafkaTimeoutError) can include broker
+        # addresses/DNS names in their message. The full exception + stack
+        # trace is already captured server-side by logger.exception above.
+        logger.exception("Failed to publish demo RAN metrics for scenario=%s", req.scenario)
+        return JSONResponse(
+            status_code=502,
+            content={
+                "timestamp": utc_now(),
+                "status": "error",
+                "error": "Failed to publish demo metrics to Kafka",
+                "scenario": meta["scenario"],
+                "cell_id": meta["cell_id"],
+                "band": meta["band"],
+            },
+        )
+
+    kafka_ok = request.app.state.kafka_consumer.is_connected
+    return {
+        "_deps": build_deps({"kafka": kafka_ok}),
+        "timestamp": utc_now(),
+        "status": "queued",
+        "scenario": meta["scenario"],
+        "cell_id": meta["cell_id"],
+        "band": meta["band"],
+        "topic": DEMO_METRICS_TOPIC,
+        "kafka_offset": offset,
+    }
 
 
 @app.post("/api/chat")
