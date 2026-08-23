@@ -13,18 +13,23 @@
 apiVersion: rbac.open-cluster-management.io/v1alpha1
 kind: ClusterPermission
 metadata:
-  name: {{ include "hub.fullname" $ }}-aap-integration
+  # -edit suffix: ClusterRoleBinding roleRef is immutable, so switching from an older
+  # inline-role binding requires a new resource name. helm then deletes the old
+  # ClusterPermission and ACM recreates the spoke binding against `edit` cleanly.
+  name: {{ include "hub.fullname" $ }}-aap-integration-edit
   namespace: {{ .name }}
   labels:
     {{- include "hub.labels" $ | nindent 4 }}
 spec:
-  clusterRole:
-    rules:
-      # Broad read+patch: Lightspeed generates patches for arbitrary kinds at runtime.
-      - apiGroups: ["", "apps", "batch", "networking.k8s.io"]
-        resources: ["*"]
-        verbs: ["get", "list", "patch"]
+  # Bind the built-in aggregated `edit` ClusterRole rather than a bespoke wildcard:
+  # Lightspeed generates patches/creates for arbitrary workload kinds at runtime, and
+  # `edit` already covers them (deployments, HPAs, configmaps, PDBs, ...) while excluding
+  # RBAC escalation, cluster-scoped and quota writes. Avoids per-apiGroup 403 whack-a-mole.
   clusterRoleBinding:
+    roleRef:
+      apiGroup: rbac.authorization.k8s.io
+      kind: ClusterRole
+      name: edit
     subject:
       apiGroup: rbac.authorization.k8s.io
       kind: User
