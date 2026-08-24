@@ -444,6 +444,7 @@ frontend:
 
 agentService:
   enabled: true
+  waitForDeps: true
   prompts:
     analyzeSystem: ""
     investigateSystem: ""

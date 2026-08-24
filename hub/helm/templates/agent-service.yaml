@@ -18,6 +18,18 @@ spec:
         {{- include "hub.labels" . | nindent 8 }}
         app.kubernetes.io/component: agent-service
     spec:
+      {{- if .Values.agentService.waitForDeps }}
+      initContainers:
+        - name: wait-for-llamastack
+          image: "curlimages/curl:8.13.0"
+          command: ["sh", "-c"]
+          args:
+            - |
+              until curl -sf http://{{ index .Values "llama-stack" "host" }}:{{ index .Values "llama-stack" "port" }}/v1/models; do
+                echo "Waiting for LlamaStack..."
+                sleep 5
+              done
+      {{- end }}
       containers:
         - name: agent-service
           image: "{{ .Values.image.registry }}/{{ .Values.image.agentService }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
