@@ -1,9 +1,9 @@
 import asyncio
-import json
 import re
 import time
 
 import httpx
+import json_repair
 import yaml
 from langchain_core.messages import HumanMessage, SystemMessage
 from loguru import logger
@@ -26,29 +26,13 @@ from agent_service.config import (
 from agent_service.evidence import build_evidence_prompt, build_grounding_text, get_pod_logs_for_attachment, get_structured_attachments
 from agent_service.models import RemediationResult
 from agent_service.nodes.rag_retrieval import store_generated_playbook
-from agent_service.playbook_sanitize import _quote_jinja, fix_ansible_facts, sanitize_playbook
-from agent_service.utils import _normalize_component_name, build_launch_extra_vars
+from agent_service.playbook_sanitize import fix_ansible_facts, quote_jinja, sanitize_playbook
+from agent_service.utils import build_launch_extra_vars, derive_deployment_name, normalize_component_name
 from agent_service.utils import invoke_tool as _invoke_tool
 
 # Strip markdown code fences (``` or ```yaml/```yml) from LLM responses
 _FENCE_RE = re.compile(r"```\w*\s*\n?", re.IGNORECASE)
 _SUMMARY_KEYS = ("affected_component", "root_cause", "remediation_steps", "edge_site_id")
-
-
-def _extract_json_object(text: str) -> str | None:
-    """Find the outermost balanced {...} in text by scanning from the last }."""
-    end = text.rfind("}")
-    if end < 0:
-        return None
-    depth = 0
-    for i in range(end, -1, -1):
-        if text[i] == "}":
-            depth += 1
-        elif text[i] == "{":
-            depth -= 1
-        if depth == 0:
-            return text[i : end + 1]
-    return None
 
 
 _als_client: httpx.AsyncClient | None = None
@@ -89,7 +73,7 @@ def _build_playbook_name(rca, log_event) -> str:
 def _extract_yaml(text: str) -> tuple[str, list | dict | None]:
     """Strip markdown fences and parse YAML once. Returns (cleaned_text, parsed)."""
     cleaned = _FENCE_RE.sub("", text).strip()
-    cleaned = _quote_jinja(cleaned)
+    cleaned = quote_jinja(cleaned)
     cleaned = fix_ansible_facts(cleaned)
     try:
         parsed = yaml.safe_load(cleaned)
@@ -111,27 +95,19 @@ def _playbook_name_from_parsed(parsed, rca, log_event) -> str:
 
 def _parse_summary_json(text: str) -> dict:
     """Parse a summarizer response into the overlay keys we accept."""
-    cleaned = _FENCE_RE.sub("", text).strip()
-    candidates = [cleaned]
-    extracted = _extract_json_object(cleaned)
-    if extracted and extracted not in candidates:
-        candidates.append(extracted)
-    parsed = None
+    parsed = json_repair.loads(text)
+    candidates = parsed if isinstance(parsed, list) else [parsed]
     for candidate in candidates:
-        if not candidate:
+        if not isinstance(candidate, dict):
             continue
-        try:
-            parsed = json.loads(candidate)
-            break
-        except json.JSONDecodeError:
-            continue
-    if not isinstance(parsed, dict):
-        return {}
-    return {
-        key: parsed[key]
-        for key in _SUMMARY_KEYS
-        if isinstance(parsed.get(key), str) and parsed[key]
-    }
+        overlay = {
+            key: candidate[key]
+            for key in _SUMMARY_KEYS
+            if isinstance(candidate.get(key), str) and candidate[key]
+        }
+        if overlay:
+            return overlay
+    return {}
 
 
 async def _summarize_evidence(rca, investigation_evidence: str) -> dict:
@@ -444,7 +420,7 @@ async def _resolve_target(extra_vars: dict, llm_summary: dict | None) -> tuple[d
         return extra_vars, ""
     candidate = ""
     if llm_summary:
-        candidate = _normalize_component_name(llm_summary.get("affected_component", ""))
+        candidate = normalize_component_name(llm_summary.get("affected_component", ""))
     original = extra_vars.get("pod_name", "")
     candidate = candidate or original
     # No retargeting: don't gate the launch on a verify call that could fail transiently.
@@ -458,7 +434,8 @@ async def _resolve_target(extra_vars: dict, llm_summary: dict | None) -> tuple[d
     if not spec.get("success"):
         site = edge_site_id or "default cluster"
         return extra_vars, f"target '{candidate}' not found on {site}: {spec.get('error', '')}"
-    return {**extra_vars, "pod_name": spec.get("name") or candidate}, ""
+    resolved_pod = spec.get("name") or candidate
+    return {**extra_vars, "pod_name": resolved_pod, "deployment_name": derive_deployment_name(resolved_pod)}, ""
 
 
 async def _execute_in_aap(
