@@ -70,13 +70,26 @@ _TOOLS = [
         "type": "function",
         "function": {
             "name": "search_logs",
-            "description": "Search aggregated logs via Loki",
+            "description": (
+                "Search aggregated logs via Loki. Filters do NOT accept '*' or "
+                "shell-glob wildcards. Prefer namespace + text; add pod only if "
+                "needed."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "namespace": {"type": "string", "description": "Kubernetes namespace"},
-                    "pod": {"type": "string", "description": "Pod name filter"},
-                    "container": {"type": "string", "description": "Container name filter"},
+                    "pod": {
+                        "type": "string",
+                        "description": "Pod name substring (partial match, no wildcards; e.g. 'edge-fast-path')",
+                    },
+                    "container": {
+                        "type": "string",
+                        "description": (
+                            "Exact container name (NOT the pod name). Omit unless you know it; "
+                            "it is an exact match, not a substring."
+                        ),
+                    },
                     "labels": {
                         "type": "object",
                         "description": "Label selector",

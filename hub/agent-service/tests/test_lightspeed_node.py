@@ -3,6 +3,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
+import yaml
 from helpers import make_log_event, make_rca
 
 from agent_service.graph import _route_after_lightspeed
@@ -12,6 +13,8 @@ from agent_service.models import (
 )
 from agent_service.nodes._aap_job import JobOutcome
 from agent_service.nodes.lightspeed import (
+    _MAX_EVIDENCE_CHARS,
+    _MAX_EVIDENCE_ITEMS,
     _build_attachments,
     _build_playbook_name,
     _build_prompt,
@@ -29,6 +32,7 @@ from agent_service.playbook_sanitize import (
     _iter_uri_tasks,
     _strip_dangerous_headers,
     fix_ansible_facts,
+    playbook_validation_error,
     quote_jinja,
     sanitize_playbook,
 )
@@ -278,6 +282,23 @@ def test_prompt_with_empty_llm_summary_uses_rca():
     assert "nginx-abc" in prompt
 
 
+def test_prompt_dedups_repeated_evidence():
+    prompt = _build_prompt(
+        make_rca(evidence=["resolver timeout", "resolver timeout", "upstream unreachable"]),
+        make_log_event(pod_name="coredns-1"),
+    )
+    assert prompt.count("resolver timeout") == 1
+    assert "upstream unreachable" in prompt
+
+
+def test_prompt_evidence_is_bounded():
+    evidence = [f"loki line {i}" for i in range(_MAX_EVIDENCE_ITEMS * 4)]
+    prompt = _build_prompt(make_rca(evidence=evidence), make_log_event(pod_name="coredns-1"))
+    evidence_section = prompt.split("Evidence:\n", 1)[1].split("\n\n", 1)[0]
+    assert len(evidence_section.splitlines()) <= _MAX_EVIDENCE_ITEMS
+    assert len(evidence_section) <= _MAX_EVIDENCE_CHARS
+
+
 # -- _build_attachments --
 
 
@@ -364,17 +385,50 @@ class TestLightspeedNodeSuccess:
         assert "cluster" in name
 
     async def test_empty_als_response_fails_closed(self):
-        result, _, invoke_mock = await _run_node(als_return={"response": ""})
+        result, als_mock, invoke_mock = await _run_node(als_return={"response": ""})
         rr = result["remediation_result"]
         assert rr.success is False
-        assert "YAML validation" in rr.output_summary
+        assert "validation" in rr.output_summary
+        assert als_mock.await_count == 2
         invoke_mock.assert_not_called()
 
     async def test_unparseable_yaml_fails_closed(self):
-        result, _, invoke_mock = await _run_node(als_return={"response": "not: [valid: yaml: {{"})
+        result, als_mock, invoke_mock = await _run_node(als_return={"response": "not: [valid: yaml: {{"})
         rr = result["remediation_result"]
         assert rr.success is False
-        assert "YAML validation" in rr.output_summary
+        assert "validation" in rr.output_summary
+        assert als_mock.await_count == 2
+        invoke_mock.assert_not_called()
+
+    async def test_missing_url_quote_is_retried_before_publishing(self):
+        malformed_playbook = (
+            "- hosts: localhost\n  tasks:\n  - uri:\n"
+            "      url: \"{{ lookup('env', 'K8S_AUTH_HOST') }}/apis/apps/v1/namespaces/prod/deployments/nginx\n"
+            "      method: GET\n"
+        )
+        assert _extract_yaml(malformed_playbook)[1] is None
+        node_result, als_mock, invoke_mock = await _run_node(
+            als_side_effect=[{"response": malformed_playbook}, _ALS_RESPONSE],
+        )
+        assert node_result["remediation_result"].success is True
+        assert als_mock.await_count == 2
+        original_prompt, original_attachments = als_mock.call_args_list[0].args
+        correction_prompt, correction_attachments = als_mock.call_args_list[1].args
+        assert original_prompt in correction_prompt
+        assert malformed_playbook.strip() in correction_prompt
+        assert "matching quotes" in correction_prompt
+        assert correction_attachments == original_attachments
+        commits = [call for call in invoke_mock.call_args_list if call.args[0] == "commit_playbook"]
+        assert len(commits) == 1
+        assert "hosts: all" in commits[0].args[1]["playbook_content"]
+        assert "K8S_AUTH_HOST" not in commits[0].args[1]["playbook_content"]
+
+    async def test_correction_request_failure_does_not_publish(self):
+        node_result, als_mock, invoke_mock = await _run_node(
+            als_side_effect=[{"response": "not: [valid: yaml: {{"}, httpx.ReadTimeout("correction timed out")],
+        )
+        assert node_result["remediation_result"].success is False
+        assert als_mock.await_count == 2
         invoke_mock.assert_not_called()
 
 
@@ -580,6 +634,37 @@ class TestAAPExecution:
 
 
 class TestPreLaunchVerification:
+    @pytest.mark.parametrize("original_pod", ["edge-nginx", "edge-nginx-8447d9687c-56twg"])
+    @pytest.mark.parametrize("site", ["edge-site-01", "edge-site-02"])
+    async def test_pod_container_target_launches_correct_deployment(self, original_pod, site):
+        target_pod = "edge-nginx-8447d9687c-56twg"
+
+        async def verify_pod(tool_name, kwargs):
+            if tool_name == "get_pod_spec":
+                assert kwargs == {"name": target_pod, "namespace": "edge-test", "edge_site_id": site}
+                return {"success": True, "name": target_pod, "spec": {}}
+            return await _default_invoke(tool_name, kwargs)
+
+        node_result, _, invoke_mock = await _run_node(
+            als_return=_ALS_RESPONSE,
+            invoke_fn=verify_pod,
+            log_event=make_log_event(
+                pod_name=original_pod, namespace="edge-test", container="nginx", edge_site_id="edge-site-01"
+            ),
+            llm_summary={"affected_component": f"{target_pod}/nginx", "edge_site_id": site},
+            resource_specs=f"Edge site: {site}\nPod: {target_pod}\n  Container: nginx",
+        )
+        assert node_result["remediation_result"].success is True
+        launch = next(call for call in invoke_mock.call_args_list if call.args[0] == "launch_job")
+        assert launch.args[1]["extra_vars"] == {
+            "pod_name": target_pod,
+            "namespace": "edge-test",
+            "container": "nginx",
+            "edge_site_id": site,
+            "deployment": "edge-nginx",
+            "deployment_name": "edge-nginx",
+        }
+
     async def test_verify_retargets_pod_name_to_affected_component(self):
         async def verify_ok(tool_name, kwargs):
             if tool_name == "get_pod_spec":
@@ -1384,6 +1469,28 @@ class TestQuoteJinja:
 
 
 class TestFixAnsibleFacts:
+    @pytest.mark.parametrize("body_style", ["inline", "block"])
+    def test_timestamp_rewrite_preserves_json_body(self, body_style):
+        json_body = (
+            '{"spec":{"template":{"metadata":{"annotations":'
+            '{"kubectl.kubernetes.io/restartedAt":"{{ ansible_date_time.iso8601 }}"}}}}}'
+        )
+        body_value = f"'{json_body}'" if body_style == "inline" else f"|\n        {json_body}"
+        generated_yaml = (
+            "- hosts: localhost\n  gather_facts: false\n  tasks:\n"
+            "  - uri:\n      method: PATCH\n      url: https://api/apis/apps/v1/deployments/app\n"
+            f"      body: {body_value}\n      status: 200\n"
+        )
+        _, parsed = _extract_yaml(generated_yaml)
+        assert isinstance(parsed, list)
+        sanitized = sanitize_playbook(parsed)
+        uri = sanitized[0]["tasks"][0]["uri"]
+        timestamp = uri["body"]["spec"]["template"]["metadata"]["annotations"]["kubectl.kubernetes.io/restartedAt"]
+        assert timestamp == "{{ now(utc=True, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+        assert uri["status_code"] == 200
+        assert "status" not in uri
+        assert yaml.safe_load(yaml.safe_dump(sanitized)) == sanitized
+
     def test_replaces_ansible_date_time_iso8601(self):
         text = "    restartedAt: {{ ansible_date_time.iso8601 }}"
         assert "ansible_date_time" not in fix_ansible_facts(text)
@@ -1396,6 +1503,311 @@ class TestFixAnsibleFacts:
     def test_replaces_with_extra_whitespace(self):
         text = "    restartedAt: {{  ansible_date_time.iso8601  }}"
         assert "ansible_date_time" not in fix_ansible_facts(text)
+
+
+class TestGeneratedRestartValidation:
+    @pytest.mark.parametrize("corrected", [True, False])
+    async def test_new_body_error_after_yaml_correction_gets_one_more_attempt(self, corrected):
+        invalid_body = _make_playbook(
+            {
+                "method": "PATCH",
+                "url": "https://api/apis/apps/v1/deployments/{{ deployment_name }}",
+                "body": '{"spec": {"replicas": 3}}}',
+            }
+        )
+        malformed_yaml = '- hosts: localhost\n  tasks:\n  - uri:\n      url: "unterminated\n'
+        valid_body = _make_playbook(
+            {
+                "method": "PATCH",
+                "url": "https://api/apis/apps/v1/deployments/{{ deployment_name }}",
+                "body": {"spec": {"replicas": 3}},
+            }
+        )
+        node_result, als_mock, invoke_mock = await _run_node(
+            als_side_effect=[
+                {"response": malformed_yaml},
+                {"response": yaml.safe_dump(invalid_body)},
+                {
+                    "response": yaml.safe_dump(
+                        valid_body if corrected else _make_playbook({"url": "https://api/api/v1/pods/app/exec"})
+                    )
+                },
+            ],
+        )
+        assert als_mock.await_count == 3
+        assert "Invalid PATCH body" in als_mock.call_args.args[0]
+        assert node_result["remediation_result"].success is corrected
+        if not corrected:
+            invoke_mock.assert_not_called()
+            return
+        committed = [call for call in invoke_mock.call_args_list if call.args[0] == "commit_playbook"]
+        assert len(committed) == 1
+        assert yaml.safe_load(committed[0].args[1]["playbook_content"])[0]["tasks"][0]["uri"]["body"] == {
+            "spec": {"replicas": 3}
+        }
+
+    @pytest.mark.parametrize("corrected", [True, False])
+    async def test_deployment_discovery_requires_correction(self, corrected):
+        generated_play = _make_playbook(
+            {
+                "method": "GET",
+                "url": "https://api/apis/apps/v1/deployments/{{ pod_name | regex_replace('-[^-]+$', '') }}",
+            }
+        )
+        generated_play[0]["tasks"].append(
+            {"ansible.builtin.set_fact": {"deployment_name": "{{ deployment_info.json.items[0].metadata.name }}"}}
+        )
+        invalid_response = {"response": yaml.safe_dump(generated_play)}
+        node_result, als_mock, invoke_mock = await _run_node(
+            als_side_effect=[invalid_response, _ALS_RESPONSE if corrected else invalid_response],
+        )
+        assert als_mock.await_count == 2
+        assert "Remove set_fact assigning deployment_name" in als_mock.call_args.args[0]
+        assert "Use /deployments/{{ deployment_name }}" in als_mock.call_args.args[0]
+        assert node_result["remediation_result"].success is corrected
+        if not corrected:
+            invoke_mock.assert_not_called()
+
+    @pytest.mark.parametrize("deployment_expression", ["{{deployment_name}}", "{{ deployment_name }}"])
+    def test_injected_deployment_target_is_allowed(self, deployment_expression):
+        parsed = _make_playbook(
+            {"url": "{{ hub_url }}/{{ edge_site_id }}/apis/apps/v1/deployments/" + deployment_expression}
+        )
+        assert playbook_validation_error(parsed) == ""
+
+    @pytest.mark.parametrize("method", ["GET", "POST"])
+    @pytest.mark.parametrize("query", ["", "?command=nslookup"])
+    @pytest.mark.parametrize("corrected", [True, False])
+    async def test_pod_exec_requires_correction_before_launch(self, method, query, corrected):
+        invalid_response = {
+            "response": yaml.safe_dump(
+                _make_playbook(
+                    {
+                        "method": method,
+                        "url": "https://api/api/v1/namespaces/test/pods/{{ pod_name }}/exec" + query,
+                    }
+                )
+            )
+        }
+        node_result, als_mock, invoke_mock = await _run_node(
+            als_side_effect=[invalid_response, _ALS_RESPONSE if corrected else invalid_response],
+        )
+        assert als_mock.await_count == 2
+        assert "Remove pods/exec calls" in als_mock.call_args.args[0]
+        assert node_result["remediation_result"].success is corrected
+        if not corrected:
+            invoke_mock.assert_not_called()
+
+    @pytest.mark.parametrize("poll", [True, False])
+    @pytest.mark.parametrize("method", ["GET", "POST"])
+    async def test_old_pod_poll_is_pruned_and_launches(self, poll, method):
+        restart_play = [
+            {
+                "hosts": "localhost",
+                "tasks": [
+                    {
+                        "uri": {
+                            "method": "PATCH",
+                            "url": "https://api/apis/apps/v1/deployments/{{ deployment_name }}",
+                            "body": {
+                                "spec": {
+                                    "template": {
+                                        "metadata": {"annotations": {"kubectl.kubernetes.io/restartedAt": "now"}}
+                                    }
+                                }
+                            },
+                        }
+                    },
+                    {
+                        "uri": {"url": "https://api/api/v1/pods/{{ pod_name }}", "method": method},
+                        **({"until": "pod.status == 'Running'"} if poll else {}),
+                    },
+                ],
+            }
+        ]
+        # The validator still flags the stale pod op on raw input (defense in depth);
+        # the node prunes it so the real restart runs on the first attempt.
+        assert "Do not poll a named pod" in playbook_validation_error(restart_play)
+        generated = {"response": yaml.safe_dump(restart_play)}
+        node_result, als_mock, invoke_mock = await _run_node(als_side_effect=[generated])
+        assert als_mock.await_count == 1
+        assert node_result["remediation_result"].success is True
+        committed = [call for call in invoke_mock.call_args_list if call.args[0] == "commit_playbook"]
+        assert len(committed) == 1
+        launched = yaml.safe_load(committed[0].args[1]["playbook_content"])
+        urls = [task["uri"]["url"] for task in launched[0]["tasks"]]
+        assert "https://api/api/v1/pods/{{ pod_name }}" not in urls
+        assert any("/deployments/{{ deployment_name }}" in url for url in urls)
+
+    @pytest.mark.parametrize("corrected", [True, False])
+    async def test_extra_json_brace_requires_correction_after_pruning_stale_get(self, corrected):
+        timestamp_body = {
+            "spec": {"template": {"metadata": {"annotations": {"kubectl.kubernetes.io/restartedAt": "now"}}}}
+        }
+        restart_play = _make_playbook(
+            {
+                "method": "PATCH",
+                "url": "https://api/apis/apps/v1/deployments/{{ deployment_name }}",
+                "body": timestamp_body,
+            }
+        )
+        valid_response = {"response": yaml.safe_dump(restart_play)}
+        restart_play[0]["tasks"][0]["uri"]["body"] = (
+            '{"spec": {"template": {"metadata": {"annotations": '
+            '{"kubectl.kubernetes.io/restartedAt": "{{ ansible_date_time.iso8601 }}"}}}}}}'
+        )
+        restart_play[0]["tasks"].append({"uri": {"url": "https://api/api/v1/pods/{{ pod_name }}"}})
+        invalid_response = {"response": yaml.safe_dump(restart_play)}
+        node_result, als_mock, invoke_mock = await _run_node(
+            als_side_effect=[invalid_response, valid_response if corrected else invalid_response],
+        )
+        assert als_mock.await_count == 2
+        # The stale pod GET is pruned; the malformed PATCH body still needs a correction.
+        assert "Invalid PATCH body" in als_mock.call_args.args[0]
+        assert "subsequent GET/assertion" not in als_mock.call_args.args[0]
+        assert node_result["remediation_result"].success is corrected
+        if not corrected:
+            invoke_mock.assert_not_called()
+            return
+        committed = [
+            call.args[1]["playbook_content"] for call in invoke_mock.call_args_list if call.args[0] == "commit_playbook"
+        ]
+        assert len(committed) == 1
+        assert yaml.safe_load(committed[0])[0]["tasks"][0]["uri"]["body"] == timestamp_body
+
+    async def test_dns_demo_exec_task_is_pruned_and_launches_without_correction(self):
+        """Live DNS demo repro: the model keeps emitting a pods/exec 'clear cache'
+        task. It is pruned so the real restart runs on the first attempt."""
+        play = [
+            {
+                "name": "Remediate DNS failure in edge-nginx",
+                "hosts": "localhost",
+                "connection": "local",
+                "gather_facts": False,
+                "tasks": [
+                    {
+                        "name": "Restart the edge-nginx Deployment",
+                        "uri": {
+                            "method": "PATCH",
+                            "url": "https://api/apis/apps/v1/namespaces/ns/deployments/{{ deployment_name }}",
+                            "body": {
+                                "spec": {
+                                    "template": {
+                                        "metadata": {"annotations": {"kubectl.kubernetes.io/restartedAt": "now"}}
+                                    }
+                                }
+                            },
+                        },
+                    },
+                    {
+                        "name": "Clear DNS cache in the nginx container",
+                        "uri": {"method": "GET", "url": "https://api/api/v1/namespaces/ns/pods"},
+                    },
+                    {
+                        "name": "Exec into the pod to clear dns cache",
+                        "uri": {"method": "POST", "url": "https://api/api/v1/namespaces/ns/pods/{{ item }}/exec"},
+                        "with_items": "{{ pod_list.json.items | map(attribute='metadata.name') | list }}",
+                    },
+                ],
+            }
+        ]
+        generated = {"response": yaml.safe_dump(play)}
+        # The model never self-corrects: the same response would come back every attempt.
+        node_result, als_mock, invoke_mock = await _run_node(als_side_effect=[generated, generated, generated])
+        assert als_mock.await_count == 1
+        assert node_result["remediation_result"].success is True
+        committed = [call for call in invoke_mock.call_args_list if call.args[0] == "commit_playbook"]
+        assert len(committed) == 1
+        launched = yaml.safe_load(committed[0].args[1]["playbook_content"])
+        urls = [task["uri"]["url"] for task in launched[0]["tasks"]]
+        assert not any("/exec" in url for url in urls)
+        assert any("/deployments/{{ deployment_name }}" in url for url in urls)
+        assert "https://api/api/v1/namespaces/ns/pods" in urls  # harmless list GET kept
+
+    def test_prune_keeps_restart_removes_exec(self):
+        play = [
+            {
+                "hosts": "localhost",
+                "tasks": [
+                    {
+                        "uri": {
+                            "method": "PATCH",
+                            "url": "https://api/apis/apps/v1/deployments/{{ deployment_name }}",
+                            "body": {
+                                "spec": {
+                                    "template": {
+                                        "metadata": {"annotations": {"kubectl.kubernetes.io/restartedAt": "now"}}
+                                    }
+                                }
+                            },
+                        }
+                    },
+                    {"uri": {"method": "POST", "url": "https://api/api/v1/pods/{{ pod_name }}/exec"}},
+                ],
+            }
+        ]
+        sanitized = sanitize_playbook(play)
+        urls = [task["uri"]["url"] for task in sanitized[0]["tasks"]]
+        assert not any("/exec" in url for url in urls)
+        assert playbook_validation_error(sanitized) == ""
+
+    def test_prune_skipped_when_no_corrective_action_remains(self):
+        play = [
+            {
+                "hosts": "localhost",
+                "tasks": [{"uri": {"method": "POST", "url": "https://api/api/v1/pods/{{ pod_name }}/exec"}}],
+            }
+        ]
+        sanitized = sanitize_playbook(play)
+        # Nothing to salvage: the exec task is kept so the validator still rejects it.
+        assert "Remove pods/exec calls" in playbook_validation_error(sanitized)
+
+    @pytest.mark.parametrize("body", [None, 123, "not JSON", '{"spec": {"replicas": 3}}}'])
+    def test_invalid_patch_body_is_rejected(self, body):
+        parsed = sanitize_playbook(_make_playbook({"method": "PATCH", "body": body}))
+        assert "Invalid PATCH body" in playbook_validation_error(parsed)
+
+    @pytest.mark.parametrize(
+        "body", [{"spec": {"replicas": 3}}, '[{"op": "replace", "path": "/spec/replicas", "value": 3}]']
+    )
+    def test_structured_patch_body_is_accepted(self, body):
+        parsed = sanitize_playbook(_make_playbook({"method": "PATCH", "body": body}))
+        assert playbook_validation_error(parsed) == ""
+
+    @pytest.mark.parametrize("section", ["tasks", "post_tasks"])
+    def test_pre_task_restart_rejects_later_pod_read(self, section):
+        parsed = _make_playbook(
+            {
+                "method": "PATCH",
+                "url": "https://api/apis/apps/v1/deployments/{{ deployment_name }}",
+                "body": {
+                    "spec": {"template": {"metadata": {"annotations": {"kubectl.kubernetes.io/restartedAt": "now"}}}}
+                },
+            }
+        )
+        parsed[0]["pre_tasks"] = parsed[0].pop("tasks")
+        parsed[0][section] = [{"uri": {"url": "https://api/api/v1/pods/{{ pod_name }}"}}]
+        assert "subsequent GET/assertion" in playbook_validation_error(parsed)
+        parsed[0]["pre_tasks"], parsed[0][section] = parsed[0][section], parsed[0]["pre_tasks"]
+        assert playbook_validation_error(parsed) == ""
+
+    @pytest.mark.parametrize("method", ["GET", "PATCH"])
+    def test_uri_status_alias_is_normalized(self, method):
+        parsed = _make_playbook({"method": method, "status": 200, "status_code": [200, 201]})
+        uri = sanitize_playbook(parsed)[0]["tasks"][0]["uri"]
+        assert "status" not in uri
+        assert uri["status_code"] == [200, 201]
+
+    def test_pod_poll_without_deployment_restart_is_allowed(self):
+        parsed = [
+            {
+                "hosts": "localhost",
+                "tasks": [
+                    {"uri": {"url": "https://api/api/v1/pods/app"}, "until": "pod.status == 'Running'"},
+                ],
+            }
+        ]
+        assert playbook_validation_error(parsed) == ""
 
 
 class TestQuoteJinjaRegex:
@@ -1724,8 +2136,74 @@ class TestPromptRegressionGuard:
         assert "NEVER use lookup" not in LIGHTSPEED_PROMPT_TEMPLATE
 
     def test_prompt_contains_available_variables(self):
-        from agent_service.config import LIGHTSPEED_PROMPT_TEMPLATE
+        from agent_service.config import DEPLOYMENT_MODE, LIGHTSPEED_PROMPT_TEMPLATE
 
-        assert "hub_url" in LIGHTSPEED_PROMPT_TEMPLATE
-        assert "token_acm" in LIGHTSPEED_PROMPT_TEMPLATE
-        assert "edge_site_id" in LIGHTSPEED_PROMPT_TEMPLATE
+        expected_variables = (
+            ("K8S_AUTH_HOST", "K8S_AUTH_API_KEY", "deployment_name")
+            if DEPLOYMENT_MODE == "single-cluster"
+            else ("hub_url", "token_acm", "edge_site_id")
+        )
+        for variable in expected_variables:
+            assert variable in LIGHTSPEED_PROMPT_TEMPLATE
+
+
+@pytest.mark.parametrize("mode", ["single-cluster", "hub-spoke"])
+def test_sanitize_preserves_local_auth_only_for_single_cluster(monkeypatch, mode):
+    import agent_service.playbook_sanitize as sanitizer
+
+    monkeypatch.setattr(sanitizer, "DEPLOYMENT_MODE", mode)
+    playbook = [
+        {
+            "hosts": "localhost",
+            "tasks": [
+                {
+                    "ansible.builtin.uri": {
+                        "url": "{{ lookup('env', 'K8S_AUTH_HOST') }}/api/v1/namespaces/{{ namespace }}/pods",
+                        "headers": {"Authorization": "Bearer {{ lookup('env', 'K8S_AUTH_API_KEY') }}"},
+                    }
+                }
+            ],
+        }
+    ]
+    cleaned = sanitizer.sanitize_playbook(playbook)
+    uri = cleaned[0]["tasks"][0]["ansible.builtin.uri"]
+    assert ("K8S_AUTH_HOST" in uri["url"]) == (mode == "single-cluster")
+    assert ("K8S_AUTH_API_KEY" in uri["headers"]["Authorization"]) == (mode == "single-cluster")
+
+
+@pytest.mark.parametrize("scheme", ["http://", "https://"])
+def test_sanitize_removes_duplicate_scheme_in_generated_facts(monkeypatch, scheme):
+    import agent_service.playbook_sanitize as sanitizer
+
+    monkeypatch.setattr(sanitizer, "DEPLOYMENT_MODE", "single-cluster")
+    host_lookup = "{{ lookup('env', 'K8S_AUTH_HOST') }}"
+    playbook = [
+        {
+            "hosts": "localhost",
+            "tasks": [
+                {"set_fact": {"k8s_api_url": scheme + host_lookup}},
+                {"uri": {"url": scheme + host_lookup + "/api/v1/pods"}},
+            ],
+        }
+    ]
+    tasks = sanitizer.sanitize_playbook(playbook)[0]["tasks"]
+    assert tasks[0]["set_fact"]["k8s_api_url"] == host_lookup
+    assert tasks[1]["uri"]["url"] == host_lookup + "/api/v1/pods"
+
+
+@pytest.mark.asyncio
+async def test_generated_playbook_uses_scoped_aap_resources(monkeypatch):
+    prefix = "hub-team-a-"
+    monkeypatch.setattr("agent_service.nodes.lightspeed.AAP_RESOURCE_PREFIX", prefix)
+    monkeypatch.setattr("agent_service.nodes.lightspeed.AAP_LIGHTSPEED_TEMPLATE", prefix + "lightspeed-runner")
+    monkeypatch.setattr("agent_service.nodes.lightspeed.GITEA_PROJECT_NAME", prefix + "lightspeed-generated")
+    outcome, _, invoke_mock = await _run_node(als_return=_ALS_RESPONSE)
+    calls = {call.args[0]: call.args[1] for call in invoke_mock.call_args_list}
+    template_name = prefix + "remediate-oomkilled-nginx-abc123"
+    assert calls["commit_playbook"]["playbook_name"] == template_name
+    assert calls["sync_project"]["project_name"] == prefix + "lightspeed-generated"
+    assert calls["upsert_job_template"]["project_name"] == prefix + "lightspeed-generated"
+    assert calls["upsert_job_template"]["base_template_name"] == prefix + "lightspeed-runner"
+    assert calls["upsert_job_template"]["template_name"] == template_name
+    assert calls["launch_job"]["job_template_name"] == template_name
+    assert outcome["remediation_result"].generated_template_name == template_name
