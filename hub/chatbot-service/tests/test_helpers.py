@@ -145,12 +145,14 @@ class TestBuildDemoEvent:
         assert event["kubernetes"]["namespace_name"] == "dark-noc-edge"
         assert event["labels"]["edge_site_id"] == "edge-site-01"
         assert event["incident_id"] == "test-id-1"
+        assert event["_overrides"] == {"confidence_override": 0.95, "failure_type_override": "CrashLoopBackOff"}
 
     def test_oom(self):
         event = build_demo_event("oom", "edge-02", "test-id-2")
         assert event["labels"]["dark_noc_scenario"] == "oom"
         assert "OOMKilled" in event["message"]
         assert event["labels"]["edge_site_id"] == "edge-02"
+        assert event["_overrides"] == {"confidence_override": 0.95, "failure_type_override": "OOMKilled"}
 
     def test_lightspeed(self):
         event = build_demo_event("lightspeed", "edge-site-01", "test-id-3")

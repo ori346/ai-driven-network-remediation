@@ -156,7 +156,7 @@ def deployment_remediation_actuation_source(
 
     if fast_path_cooldown_active(fast_heal, cooldown_seconds):
         return "spoke"
-    if fast_path_cooldown_active(restart_at, cooldown_seconds):
+    if fast_path_cooldown_active(restart_at, cooldown_seconds) and not is_dashboard_demo_kafka_event(raw_event):
         return "hub"
     if demo_oom_alert_follows_spoke_heal(
         fast_heal,

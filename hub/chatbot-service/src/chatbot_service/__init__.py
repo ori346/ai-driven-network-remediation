@@ -32,6 +32,7 @@ from .config import (
     APP_VERSION,
     CORS_ORIGINS,
     DEMO_TOPIC,
+    EDGE_SITE_ID,
     INTEGRATION_TARGETS,
     INTEGRATIONS_CACHE_TTL,
     KAFKA_BOOTSTRAP,
@@ -75,7 +76,7 @@ class ChatRequest(BaseModel):
 
 class DemoTriggerRequest(BaseModel):
     scenario: str = "crashloop"
-    site: str = "edge-site-01"
+    site: str = EDGE_SITE_ID
 
 
 # ── Integrations Builder ──────────────────────────────────────────
@@ -223,6 +224,8 @@ async def trigger_demo(req: DemoTriggerRequest) -> dict:
         "topic": DEMO_TOPIC,
         "kafka_offset": offset,
         "event_message": event["message"],
+        "namespace": event["kubernetes"]["namespace_name"],
+        "workload": event["kubernetes"]["pod_name"],
     }
 
 
