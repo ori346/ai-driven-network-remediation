@@ -98,3 +98,12 @@ async def test_no_matching_template_returns_none_result():
     assert result["remediation_result"].action_taken == "none"
     assert result["remediation_result"].success is False
     assert result["should_retry"] is False
+
+
+@pytest.mark.asyncio
+async def test_launch_uses_scoped_template(monkeypatch):
+    monkeypatch.setattr("agent_service.nodes.remediate.AAP_RESOURCE_PREFIX", "hub-team-a-")
+    invoke_mock = AsyncMock(return_value=_LAUNCH_OK)
+    with patch("agent_service.nodes.remediate._invoke_tool", invoke_mock):
+        await _launch_job("restart-nginx", make_log_event(), "edge-site-01")
+    assert invoke_mock.call_args.args[1]["job_template_name"] == "hub-team-a-restart-nginx"
