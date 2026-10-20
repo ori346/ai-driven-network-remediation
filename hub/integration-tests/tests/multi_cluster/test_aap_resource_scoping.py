@@ -1,19 +1,23 @@
 """Offline checks for AAP hook and agent naming on a shared controller."""
 
 import json
+import re
 import shutil
 import subprocess
+import textwrap
 from pathlib import Path
 
 import pytest
-import yaml
 
 pytestmark = pytest.mark.skipif(shutil.which("helm") is None, reason="helm CLI not available")
 
-NETWORK_CHART = Path(__file__).resolve().parents[4] / "hub/helm/charts/network"
+HUB = next(parent for parent in Path(__file__).resolve().parents if parent.name == "hub")
+NETWORK_CHART = HUB / "helm" / "charts" / "network"
+
+_ENV_ENTRY = re.compile(r'- name: (\S+)\n\s+value: "([^"]*)"')
 
 
-def render_network(namespace, enabled=True):
+def render_network(namespace, show_only, enabled=True):
     command = [
         "helm",
         "template",
@@ -21,6 +25,8 @@ def render_network(namespace, enabled=True):
         str(NETWORK_CHART),
         "--namespace",
         namespace,
+        "--show-only",
+        show_only,
         "--set",
         f"aapCredential.enabled={str(enabled).lower()}",
         "--set",
@@ -28,38 +34,27 @@ def render_network(namespace, enabled=True):
         "--set",
         "global.routes.enabled=false",
     ]
-    rendered = subprocess.run(command, capture_output=True, text=True, check=True)
-    return [document for document in yaml.safe_load_all(rendered.stdout) if document]
+    return subprocess.run(command, capture_output=True, text=True, check=True).stdout
 
 
-def agent_environment(documents):
-    deployment = next(
-        document
-        for document in documents
-        if document["kind"] == "Deployment" and document["metadata"]["name"].endswith("-agent-service")
-    )
-    return {
-        entry["name"]: entry.get("value") for entry in deployment["spec"]["template"]["spec"]["containers"][0]["env"]
-    }
+def agent_environment(namespace, enabled=True):
+    rendered = render_network(namespace, "templates/agent-service.yaml", enabled=enabled)
+    return dict(_ENV_ENTRY.findall(rendered))
 
 
-def hook_script(documents):
-    return next(
-        document
-        for document in documents
-        if document["kind"] == "ConfigMap" and document["metadata"]["name"].endswith("-aap-credential-script")
-    )["data"]["setup.sh"]
+def hook_script(namespace):
+    rendered = render_network(namespace, "templates/aap-credential-script-cm.yaml")
+    return textwrap.dedent(rendered.split("setup.sh: |\n", 1)[1])
 
 
 @pytest.mark.parametrize("namespace", ["hub-team-a", "hub-another"])
 def test_hook_and_agent_share_scoped_names(namespace):
-    documents = render_network(namespace)
-    environment = agent_environment(documents)
+    environment = agent_environment(namespace)
     prefix = namespace + "-"
     assert environment["AAP_RESOURCE_PREFIX"] == prefix
     assert environment["AAP_LIGHTSPEED_TEMPLATE"] == prefix + "lightspeed-runner"
     assert environment["GITEA_PROJECT_NAME"] == prefix + "lightspeed-generated"
-    hook = hook_script(documents)
+    hook = hook_script(namespace)
     subprocess.run(["bash", "-n"], input=hook, text=True, check=True)
     assert f'RESOURCE_PREFIX="{prefix}"' in hook
     assert 'PROJ_NAME="${RESOURCE_PREFIX}lightspeed-generated"' in hook
@@ -69,7 +64,7 @@ def test_hook_and_agent_share_scoped_names(namespace):
 
 
 def test_unmanaged_aap_keeps_existing_names():
-    environment = agent_environment(render_network("hub", enabled=False))
+    environment = agent_environment("hub", enabled=False)
     assert environment["AAP_RESOURCE_PREFIX"] == ""
     assert environment["AAP_LIGHTSPEED_TEMPLATE"] == "lightspeed-runner"
     assert environment["GITEA_PROJECT_NAME"] == "lightspeed-generated"
@@ -131,8 +126,7 @@ upsert_template_for_playbook restart-nginx.yaml
 
 @pytest.mark.parametrize("namespace", ["hub-team-a", "hub-another"])
 def test_hook_copies_without_mutating_shared_templates(namespace, tmp_path):
-    documents = render_network(namespace)
-    hook = hook_script(documents)
+    hook = hook_script(namespace)
     definitions = hook.split('\nif [ "$MULTICLUSTER_ENABLED" = "true" ]; then')[0]
     execution = subprocess.run(
         ["bash", "-c", definitions + _AAP_DOUBLE + _COPY_AND_SEED],
