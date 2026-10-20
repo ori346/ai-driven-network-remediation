@@ -214,6 +214,7 @@ LIGHTSPEED_SUMMARIZE_PROMPT = os.getenv(
     "{investigation_evidence}",
 )
 
+AAP_RESOURCE_PREFIX = os.getenv("AAP_RESOURCE_PREFIX", "")
 AAP_LIGHTSPEED_TEMPLATE = os.getenv(
     "AAP_LIGHTSPEED_TEMPLATE",
     "lightspeed-runner",

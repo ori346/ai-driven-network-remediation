@@ -63,10 +63,12 @@ aapCredential:
   enabled: false
   apiServer: "https://kubernetes.default.svc"
   saNamespace: ""
+  # AAP resources managed by this hook are prefixed with the hub namespace.
   credentialName: "hub-remediation"
   organizationId: 1
   remediationTemplateNames:
     - restart-nginx
+    - scale-up-workers
   multicluster:
     enabled: false
     clusterProxyUrl: ""
@@ -152,7 +154,9 @@ agentService:
     tokenSecretKey: "api_key"
     verifySSL: "false"
     namespace: "aap"
+    # Existing source template to copy; the original is never modified.
     baseTemplateName: "lightspeed-runner"
+    projectName: "lightspeed-generated"
   slack:
     enabled: "false"
     botToken: ""

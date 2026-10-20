@@ -86,3 +86,10 @@ exec:
 initialDelaySeconds: 5
 periodSeconds: 10
 {{- end }}
+
+{{/* Keep mock/standalone names unchanged; scope resources managed by the AAP hook. */}}
+{{- define "network.aapResourcePrefix" -}}
+{{- if .Values.aapCredential.enabled -}}
+{{- printf "%s-" .Release.Namespace -}}
+{{- end -}}
+{{- end -}}

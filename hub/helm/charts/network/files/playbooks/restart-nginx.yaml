@@ -11,6 +11,12 @@
     edge_api_url_from_env: "{{ lookup('env', 'K8S_AUTH_HOST') | default('', true) }}"
     edge_token_from_env: "{{ lookup('env', 'K8S_AUTH_API_KEY') | default('', true) }}"
     edge_verify_ssl_from_env: "{{ lookup('env', 'K8S_AUTH_VERIFY_SSL') | default('false', true) }}"
+    restart_patch:
+      spec:
+        template:
+          metadata:
+            annotations:
+              kubectl.kubernetes.io/restartedAt: "{{ restart_ts }}"
 
   tasks:
     - name: Resolve managed cluster name for ACM proxy routing
@@ -77,10 +83,10 @@
 
     - name: Capture desired replica target
       ansible.builtin.set_fact:
-        desired_replicas: "{{ deploy_before.json.spec.replicas | default(1) | int }}"
+        desired_replicas: "{{ deployment_patch.spec.replicas | default(deploy_before.json.spec.replicas | default(1)) | int }}"
         pre_generation: "{{ deploy_before.json.metadata.generation | default(0) | int }}"
 
-    - name: Patch deployment with restart annotation
+    - name: Patch deployment and restart pods
       ansible.builtin.uri:
         url: "{{ edge_api_base }}/apis/apps/v1/namespaces/{{ namespace }}/deployments/{{ deployment }}"
         method: PATCH
@@ -88,12 +94,12 @@
           Authorization: "Bearer {{ edge_token_effective }}"
           Content-Type: "application/strategic-merge-patch+json"
         body_format: json
-        body:
-          spec:
-            template:
-              metadata:
-                annotations:
-                  kubectl.kubernetes.io/restartedAt: "{{ restart_ts }}"
+        body: >-
+          {{ restart_patch
+             | combine(deployment_patch | default({}), recursive=true)
+             | combine({'spec': {'replicas': desired_replicas | int}}
+                       if deployment_patch.spec.replicas is defined else {}, recursive=true)
+             | to_json }}
         validate_certs: "{{ edge_verify_ssl_bool }}"
         return_content: true
         status_code: 200

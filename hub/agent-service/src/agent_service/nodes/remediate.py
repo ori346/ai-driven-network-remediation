@@ -3,6 +3,7 @@ import re
 from loguru import logger
 
 from agent_service.config import (
+    AAP_RESOURCE_PREFIX,
     FAST_PATH_LAST_HEAL_ANNOTATION,
     now_iso,
 )
@@ -69,7 +70,7 @@ async def _launch_job(template: str, log_event, edge_site_id: str) -> dict:
     return await _invoke_tool(
         "launch_job",
         {
-            "job_template_name": template,
+            "job_template_name": f"{AAP_RESOURCE_PREFIX}{template}",
             "extra_vars": extra_vars,
         },
     )

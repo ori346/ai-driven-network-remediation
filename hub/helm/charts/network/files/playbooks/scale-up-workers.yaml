@@ -1,0 +1,19 @@
+---
+- name: Increase nginx capacity and restart after an OOM kill
+  ansible.builtin.import_playbook: restart-nginx.yaml
+  vars:
+    oom_replica_target: 3
+    oom_memory_limit: 512Mi
+    oom_memory_request: 256Mi
+    deployment_patch:
+      spec:
+        replicas: "{{ [deploy_before.json.spec.replicas | default(1) | int, oom_replica_target | int] | max }}"
+        template:
+          spec:
+            containers:
+              - name: "{{ container | default('nginx') }}"
+                resources:
+                  limits:
+                    memory: "{{ oom_memory_limit }}"
+                  requests:
+                    memory: "{{ oom_memory_request }}"
