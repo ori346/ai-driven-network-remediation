@@ -11,6 +11,7 @@ from loguru import logger
 from agent_service.config import (
     AAP_LIGHTSPEED_TEMPLATE,
     AAP_PROJECT_SYNC_TIMEOUT_SECONDS,
+    AAP_RESOURCE_PREFIX,
     GITEA_PROJECT_NAME,
     LIGHTSPEED_MAX_SUMMARIZE_CHARS,
     LIGHTSPEED_PROMPT_TEMPLATE,
@@ -34,7 +35,7 @@ from agent_service.models import GraphConfig, RemediationResult
 from agent_service.nodes._aap_job import evaluate_job
 from agent_service.nodes.rag_retrieval import store_generated_playbook
 from agent_service.playbook_sanitize import (
-    fix_ansible_facts,
+    playbook_validation_error,
     quote_jinja,
     sanitize_playbook,
 )
@@ -50,6 +51,7 @@ from agent_service.utils import (
 # Strip markdown code fences (``` or ```yaml/```yml) from LLM responses
 _FENCE_RE = re.compile(r"```\w*\s*\n?", re.IGNORECASE)
 _SUMMARY_KEYS = ("affected_component", "root_cause", "remediation_steps", "edge_site_id")
+_MAX_GENERATION_ATTEMPTS = 3
 
 
 _als_client: httpx.AsyncClient | None = None
@@ -91,7 +93,6 @@ def _extract_yaml(text: str) -> tuple[str, list | dict | None]:
     """Strip markdown fences and parse YAML once. Returns (cleaned_text, parsed)."""
     cleaned = _FENCE_RE.sub("", text).strip()
     cleaned = quote_jinja(cleaned)
-    cleaned = fix_ansible_facts(cleaned)
     try:
         parsed = yaml.safe_load(cleaned)
         return cleaned, parsed
@@ -154,7 +155,8 @@ def _build_prompt(
     """Build the ALS prompt, omitting fields that have no useful value."""
     summary = rca.summary if rca else ""
     target_component = log_event.pod_name if log_event else "unknown"
-    evidence_str = "\n".join(rca.evidence) if rca and rca.evidence else ""
+    evidence_items = list(dict.fromkeys(rca.evidence)) if rca and rca.evidence else []
+    evidence_str = "\n".join(evidence_items[:_MAX_EVIDENCE_ITEMS])[:_MAX_EVIDENCE_CHARS]
     actions = ", ".join(rca.recommended_actions) if rca else ""
 
     if llm_summary:
@@ -254,6 +256,35 @@ async def _call_als(prompt: str, attachments: list[dict]) -> dict:
     return resp.json()
 
 
+async def _generate_playbook(prompt: str, attachments: list[dict]) -> tuple[dict, list | dict | None]:
+    generation_prompt = prompt
+    previous_error = ""
+    for attempt in range(_MAX_GENERATION_ATTEMPTS):
+        als_response = await _call_als(generation_prompt, attachments)
+        logger.debug(f"Raw ALS response: {als_response}")
+        playbook_yaml, parsed = _extract_yaml(als_response.get("response", ""))
+        parsed = sanitize_playbook(parsed)
+        validation_error = playbook_validation_error(parsed)
+        if not validation_error:
+            return als_response, parsed
+        parsed = None
+        if validation_error == previous_error:
+            break
+        previous_error = validation_error
+        if attempt + 1 < _MAX_GENERATION_ATTEMPTS:
+            logger.warning(f"Generated playbook validation failed: {validation_error}; requesting one correction")
+            generation_prompt = (
+                f"{prompt}\n\nYour previous response failed validation and was not executed. "
+                "Return a complete corrected Ansible playbook as a YAML list of plays. "
+                "Check matching quotes (especially URL values), indentation, and brackets. "
+                "Use a YAML mapping for every strategic-merge PATCH body, never a quoted JSON string. "
+                "Follow all original remediation and authentication requirements.\n\n"
+                f"Validation error: {validation_error}\n\n"
+                f"Rejected response:\n{playbook_yaml}"
+            )
+    return {**als_response, "validation_error": validation_error}, parsed
+
+
 async def _upsert_template(name: str, playbook_path: str) -> dict:
     if not playbook_path:
         raise ValueError(f"playbook_path is required for template '{name}'")
@@ -312,29 +343,24 @@ async def lightspeed_node(state) -> dict:
         logger.debug(f"ALS prompt: {prompt}")
         logger.info(f"ALS attachments count: {len(attachments)}")
 
-        data = await _call_als(prompt, attachments)
+        data, parsed = await _generate_playbook(prompt, attachments)
         duration = time.monotonic() - t0
-        logger.debug(f"Raw ALS response: {data}")
-
-        playbook_yaml, parsed = _extract_yaml(data.get("response", ""))
-        parsed = sanitize_playbook(parsed)
         if not isinstance(parsed, list):
             duration = time.monotonic() - t0
-            logger.warning(
-                f"Playbook YAML parse/sanitize failed, refusing to launch raw playbook (type={type(parsed).__name__})"
-            )
+            validation_error = data.get("validation_error", "Invalid YAML")
+            logger.warning(f"Playbook validation failed, refusing to launch: {validation_error}")
             result = RemediationResult(
                 action_taken="generate-playbook",
                 tool_used="lightspeed",
                 success=False,
                 job_id=data.get("conversation_id", ""),
                 duration_seconds=round(duration, 2),
-                output_summary="Generated playbook failed YAML validation, skipping AAP execution",
+                output_summary=f"Generated playbook failed validation: {validation_error}",
                 timestamp=now_iso(),
             )
             return {"decision": "lightspeed", "remediation_result": result}
         playbook_yaml = yaml.dump(parsed, default_flow_style=False, sort_keys=False)
-        playbook_name = _playbook_name_from_parsed(parsed, rca, log_event)
+        playbook_name = AAP_RESOURCE_PREFIX + _playbook_name_from_parsed(parsed, rca, log_event)
 
         logger.info(f"ALS responded in {duration:.2f}s, conversation_id={data.get('conversation_id', '')}")
         logger.debug(f"Generated playbook '{playbook_name}':\n{playbook_yaml}")

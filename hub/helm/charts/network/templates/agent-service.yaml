@@ -42,6 +42,10 @@ spec:
           image: "{{ .Values.image.registry }}/{{ .Values.image.agentService }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           env:
+            - name: DEPLOYMENT_MODE
+              value: {{ .Values.topology.deploymentMode | quote }}
+            - name: EDGE_NAMESPACE
+              value: {{ .Values.topology.edgeNamespace | quote }}
             - name: LLAMASTACK_HOST
               value: {{ .Values.llamastack.host | quote }}
             - name: LLAMASTACK_PORT

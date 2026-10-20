@@ -65,6 +65,30 @@ LIGHTSPEED_VERIFY_SSL = os.getenv("LIGHTSPEED_VERIFY_SSL", "false").lower() == "
 # Configurable via env var to allow prompt experimentation without redeploying.
 # Contains only static playbook-generation instructions; dynamic fields are
 # assembled in _build_prompt() and prepended at runtime.
+DEPLOYMENT_MODE = os.getenv("DEPLOYMENT_MODE", "single-cluster")
+_LIGHTSPEED_AUTH_REQUIREMENTS = (
+    "4. Authentication -- target the local Kubernetes API. Read the AAP-injected "
+    "Kubernetes bearer-token credential using lookup('env', 'K8S_AUTH_HOST') for "
+    "the API base URL and lookup('env', 'K8S_AUTH_API_KEY') for the bearer token. "
+    "K8S_AUTH_HOST is a complete URL including https://; never prepend a scheme. "
+    "Use Authorization: Bearer <token>. Do not append edge_site_id to the URL. "
+    "Use the injected namespace and deployment_name variables directly; do not "
+    "redefine them as self-referencing play variables. Never hardcode credentials.\n\n"
+    if DEPLOYMENT_MODE == "single-cluster"
+    else (
+        "4. Authentication -- target the spoke cluster through the ACM cluster-proxy. "
+        "AAP injects these variables at launch:\n"
+        "   hub_url:         cluster-proxy base URL\n"
+        "   edge_site_id:    target spoke cluster id\n"
+        "   token_acm:       cluster-proxy bearer token\n"
+        "   deployment_name: the workload to patch\n"
+        "   Build every Kubernetes API URL from the base "
+        '"{{ hub_url }}/{{ edge_site_id }}" and authenticate with the header '
+        'Authorization: "Bearer {{ token_acm }}".\n'
+        "   Do not read tokens from files or hardcode credentials.\n\n"
+    )
+)
+
 LIGHTSPEED_PROMPT_TEMPLATE = os.getenv(
     "LIGHTSPEED_PROMPT_TEMPLATE",
     "The playbook must apply a corrective fix, not investigate or diagnose.\n"
@@ -77,18 +101,11 @@ LIGHTSPEED_PROMPT_TEMPLATE = os.getenv(
     "(e.g. /apis/apps/v1/ for Deployments, /api/v1/ for Pods and ConfigMaps).\n\n"
     "3. Deployment name -- when patching a pod's parent Deployment, use the "
     "injected variable directly as {{ deployment_name }}. Do NOT derive it from "
-    "the pod name; the pod name may already be a bare workload name.\n\n"
-    "4. Authentication -- target the spoke cluster through the ACM cluster-proxy. "
-    "AAP injects these variables at launch:\n"
-    "   hub_url:         cluster-proxy base URL\n"
-    "   edge_site_id:    target spoke cluster id\n"
-    "   token_acm:       cluster-proxy bearer token\n"
-    "   deployment_name: the workload to patch\n"
-    "   Build every Kubernetes API URL from the base "
-    '"{{ hub_url }}/{{ edge_site_id }}" and authenticate with the header '
-    'Authorization: "Bearer {{ token_acm }}".\n'
-    "   Do not read tokens from files or hardcode credentials.\n\n"
-    "5. Play-level settings -- Every play MUST include:\n"
+    "the pod name; the pod name may already be a bare workload name. AAP already "
+    "supplies deployment_name: do not discover it or assign it using set_fact. "
+    "Every Deployment URL must use /deployments/{{ deployment_name }}.\n\n"
+    + _LIGHTSPEED_AUTH_REQUIREMENTS
+    + "5. Play-level settings -- Every play MUST include:\n"
     "   hosts: localhost\n"
     "   connection: local\n"
     "   gather_facts: false\n\n"
@@ -103,6 +120,16 @@ LIGHTSPEED_PROMPT_TEMPLATE = os.getenv(
     "?fieldManager=ansible&force=true, Content-Type application/apply-patch+yaml, "
     "the FULL object (apiVersion, kind, metadata.name, complete spec) as the body, "
     "body_format: json, and status_code: [200, 201].\n\n"
+    "9. Deployment restart -- patch spec.template.metadata.annotations with a fresh "
+    "kubectl.kubernetes.io/restartedAt timestamp, then poll the Deployment until "
+    "observedGeneration reaches the patched generation and updatedReplicas, "
+    "readyReplicas and availableReplicas reach spec.replicas. Use bounded retries. "
+    "Do not delete a pod and poll its old name; replacement pods have new names.\n\n"
+    "10. Keep changes relevant to the diagnosed failure. Do not change CPU or "
+    "memory resources for DNS failures without evidence of resource exhaustion.\n\n"
+    "11. Do not call pods/exec: uri does not support Kubernetes exec streaming, and the "
+    "remediation credential does not grant pods/exec. Restart containers through the "
+    "Deployment and verify its rollout; do not run nslookup or systemctl in a pod.\n\n"
     "Return ONLY valid Ansible YAML, no explanation or markdown fences.",
 )
 

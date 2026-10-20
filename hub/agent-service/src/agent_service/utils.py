@@ -9,6 +9,10 @@ from agent_service.config import EDGE_NAMESPACE, get_http_client
 # it came from. Retargeting only trusts an edge_site_id that carries this stamp,
 # so a namespace or log line that merely mentions a cluster name is not enough.
 EDGE_SITE_STAMP = "Edge site:"
+_RESOURCE_KIND_PREFIX = re.compile(
+    r"^(?:pods?|deploy(?:ment)?s?|statefulsets?|sts|daemonsets?|ds|replicasets?|rs|services?|svc|jobs?|cronjobs?)/",
+    re.IGNORECASE,
+)
 
 
 async def warm_tool_cache() -> bool:
@@ -27,12 +31,11 @@ async def warm_tool_cache() -> bool:
 def normalize_component_name(component: str) -> str:
     """Turn a free-text affected component into a matchable pod-name prefix.
 
-    Drops any '(...)' qualifier, a leading 'kind/' segment, and trailing words so
-    'deployment/orders-api (edge-site-02)' resolves to 'orders-api'.
+    Strip resource-kind prefixes and container suffixes while keeping the pod name.
     """
     without_paren = re.sub(r"\(.*?\)", " ", component)
-    last_segment = without_paren.strip().split("/")[-1]
-    tokens = last_segment.split()
+    resource_name = _RESOURCE_KIND_PREFIX.sub("", without_paren.strip()).split("/")[0]
+    tokens = resource_name.split()
     return tokens[0].lower() if tokens else ""
 
 
@@ -86,8 +89,9 @@ def build_launch_extra_vars(log_event, llm_summary=None, evidence_text="", resou
         return extra_vars
     component = normalize_component_name(llm_summary.get("affected_component", ""))
     if component and re.search(rf"\b{re.escape(component)}\b", evidence_text):
-        extra_vars["deployment"] = component
-        extra_vars["deployment_name"] = component
+        deployment = resolve_remediation_deployment(log_event.namespace or "", component)
+        extra_vars["deployment"] = deployment
+        extra_vars["deployment_name"] = deployment
     site_id = llm_summary.get("edge_site_id")
     if isinstance(site_id, str) and site_id and f"{EDGE_SITE_STAMP} {site_id}" in resource_specs:
         extra_vars["edge_site_id"] = site_id

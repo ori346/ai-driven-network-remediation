@@ -51,3 +51,19 @@ def test_workflow_timeout_tracks_lightspeed_budget(monkeypatch):
         finally:
             environment.undo()
             importlib.reload(config)
+
+
+@pytest.mark.parametrize("mode", ["single-cluster", "hub-spoke"])
+def test_lightspeed_auth_matches_topology(monkeypatch, mode):
+    config = importlib.import_module("agent_service.config")
+    with monkeypatch.context() as environment:
+        environment.setenv("DEPLOYMENT_MODE", mode)
+        environment.delenv("LIGHTSPEED_PROMPT_TEMPLATE", raising=False)
+        try:
+            importlib.reload(config)
+            prompt = config.LIGHTSPEED_PROMPT_TEMPLATE
+            assert ("K8S_AUTH_HOST" in prompt) == (mode == "single-cluster")
+            assert ("{{ hub_url }}/{{ edge_site_id }}" in prompt) == (mode == "hub-spoke")
+        finally:
+            environment.undo()
+            importlib.reload(config)
