@@ -23,7 +23,7 @@ export function DemoTrigger({ baseUrl }) {
       const res = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ scenario, site: "edge-site-01" }),
+        body: JSON.stringify({ scenario }),
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
@@ -69,6 +69,10 @@ export function DemoTrigger({ baseUrl }) {
             <strong>Scenario:</strong> <code>{result.scenario}</code> · Topic:{" "}
             <code>{result.topic}</code> · Offset:{" "}
             <code>{result.kafka_offset}</code>
+          </p>
+          <p>
+            <strong>Target:</strong>{" "}
+            <code>{result.site} / {result.namespace} / {result.workload}</code>
           </p>
           {result.event_message && (
             <p>

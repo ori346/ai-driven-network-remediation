@@ -208,3 +208,24 @@ def test_chat_empty_message(client):
     assert resp.status_code == 200
     data = resp.json()
     assert data["reply"] == "Please enter a question."
+
+
+@patch("chatbot_service.publish_demo_event")
+def test_demo_uses_configured_target(mock_publish, client, monkeypatch):
+    import chatbot_service.kafka as demo_kafka
+
+    monkeypatch.setattr(demo_kafka, "EDGE_NAMESPACE", "edge-test")
+    monkeypatch.setattr(demo_kafka, "DEMO_WORKLOAD", "edge-nginx")
+    mock_publish.return_value = 43
+    for scenario in ("crashloop", "oom", "lightspeed", "escalation"):
+        response = client.post("/api/demo/trigger", json={"scenario": scenario})
+        assert response.status_code == 200
+        published_event = mock_publish.call_args.args[0]
+        assert published_event["kubernetes"] == {
+            "namespace_name": "edge-test",
+            "pod_name": "edge-nginx",
+            "container_name": "nginx",
+        }
+        assert response.json()["namespace"] == "edge-test"
+        assert response.json()["workload"] == "edge-nginx"
+        assert response.json()["site"] == "edge-site-01"

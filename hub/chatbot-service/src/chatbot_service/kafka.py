@@ -12,6 +12,8 @@ from .config import (
     AUDIT_MAX_MESSAGES,
     AUDIT_TOPIC,
     DEMO_TOPIC,
+    DEMO_WORKLOAD,
+    EDGE_NAMESPACE,
     KAFKA_BOOTSTRAP,
 )
 from .slo import normalize_incident_record
@@ -87,17 +89,16 @@ def build_demo_event(scenario: str, site: str, incident_id: str) -> dict[str, An
     scenarios: dict[str, dict[str, Any]] = {
         "oom": {
             "message": "OOMKilled: container exceeded memory limits",
-            "pod_name": "nginx-edge-oom",
+            "confidence_override": 0.95,
+            "failure_type_override": "OOMKilled",
         },
         "lightspeed": {
             "message": "Ansible playbook generation requested for edge recovery",
-            "pod_name": "nginx-edge-lightspeed",
             "confidence_override": 0.95,
             "failure_type_override": "DNSFailure",
         },
         "escalation": {
             "message": "Kernel panic and persistent data corruption - requires human escalation",
-            "pod_name": "edge-core-critical",
             "confidence_override": 0.3,
             "failure_type_override": "Unknown",
         },
@@ -105,8 +106,9 @@ def build_demo_event(scenario: str, site: str, incident_id: str) -> dict[str, An
     spec = scenarios.get(
         normalized,
         {
-            "message": "CrashLoopBackOff: nginx configuration test failed",
-            "pod_name": "nginx-edge-crashloop",
+            "message": "CrashLoopBackOff: nginx worker stalled after a transient failure; restart required",
+            "confidence_override": 0.95,
+            "failure_type_override": "CrashLoopBackOff",
         },
     )
     if normalized not in scenarios:
@@ -118,8 +120,8 @@ def build_demo_event(scenario: str, site: str, incident_id: str) -> dict[str, An
         "message": spec["message"],
         "level": "error",
         "kubernetes": {
-            "namespace_name": "dark-noc-edge",
-            "pod_name": spec["pod_name"],
+            "namespace_name": EDGE_NAMESPACE,
+            "pod_name": DEMO_WORKLOAD,
             "container_name": "nginx",
         },
         "labels": {

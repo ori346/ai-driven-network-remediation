@@ -1,9 +1,11 @@
 CONTAINER_TOOL  ?= podman
 REGISTRY        ?= quay.io/rh-ai-quickstart
+EDGE_REGISTRY   ?= $(REGISTRY)
 VERSION         ?= 0.1.5
 ARCH            ?= linux/amd64
 NAMESPACE       ?= hub
 EDGE_NAMESPACE  ?= dark-noc-edge
+DEMO_WORKLOAD   ?= edge-nginx
 RELEASE         ?= hub
 PUSH_EXTRA_ARGS ?=
 ROUTES_ENABLED  ?= true
@@ -356,6 +358,8 @@ helm_all_args = \
 	--set global.frontendAuth.enabled=$(FRONTEND_AUTH_ENABLED) \
 	--set network.edgeRbac.enabled=$(EDGE_RBAC_ENABLED) \
 	--set-string network.edgeRbac.edgeNamespace='$(EDGE_NAMESPACE)' \
+	--set-string network.chatbotService.env.demoWorkload='$(DEMO_WORKLOAD)' \
+	--set-string network.chatbotService.env.edgeSiteId='$(EDGE_SITE_ID)' \
 	$(if $(filter true,$(ENABLE_NETWORK_REMEDIATION)),$(helm_network_remediation_mcp_args),) \
 	--set-string network.mcp-servers.mcp-servers.noc-openshift.env.DEFAULT_NAMESPACE='$(EDGE_NAMESPACE)' \
 	--set ingestionPipeline.autoIngestOnStartup=$(AUTO_INGEST_ON_STARTUP) \
@@ -504,7 +508,7 @@ argocd-apply: validate-topology
 	KAFKA_EXTERNAL_HOST='$(KAFKA_EXTERNAL_HOST)' \
 	ARGOCD_NAMESPACE='$(ARGOCD_NAMESPACE)' \
 	EDGE_SELF_HEAL='$(EDGE_SELF_HEAL)' \
-	REGISTRY='$(REGISTRY)' \
+	REGISTRY='$(EDGE_REGISTRY)' \
 	VERSION='$(VERSION)' \
 	CLUSTER_LOG_FORWARDER_ENABLED='$(CLUSTER_LOG_FORWARDER_ENABLED)' \
 	bash scripts/acm/argocd-apply.sh $(ARGOCD_APPLY_ARGS)
@@ -516,7 +520,7 @@ edge-deploy: validate-topology
 	EDGE_NAMESPACE='$(EDGE_NAMESPACE)' \
 	EDGE_HELM_RELEASE='$(EDGE_HELM_RELEASE)' \
 	EDGE_SITE_ID='$(EDGE_SITE_ID)' \
-	REGISTRY='$(REGISTRY)' \
+	REGISTRY='$(EDGE_REGISTRY)' \
 	VERSION='$(VERSION)' \
 	CLUSTER_LOG_FORWARDER_ENABLED='$(CLUSTER_LOG_FORWARDER_ENABLED)' \
 	EDGE_HEALER_ENABLED='$(EDGE_HEALER_ENABLED)' \
@@ -567,7 +571,7 @@ endif
 		EDGE_NAMESPACE='$(EDGE_NAMESPACE)' \
 		EDGE_HELM_RELEASE='$(EDGE_HELM_RELEASE)' \
 		EDGE_SITE_ID='$(EDGE_SITE_ID)' \
-		REGISTRY='$(REGISTRY)' \
+		REGISTRY='$(EDGE_REGISTRY)' \
 		VERSION='$(VERSION)' \
 		CLUSTER_LOG_FORWARDER_ENABLED='$(CLUSTER_LOG_FORWARDER_ENABLED)' \
 		EDGE_HEALER_ENABLED='$(EDGE_HEALER_ENABLED)' \

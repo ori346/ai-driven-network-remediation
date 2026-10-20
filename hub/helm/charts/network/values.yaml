@@ -102,6 +102,8 @@ chatbotService:
     modelApiUrl: "http://llamastack-service:8321/v1/chat/completions"
     modelName: ""
     demoTopic: "system-alerts"
+    demoWorkload: "edge-nginx"
+    edgeSiteId: "edge-site-01"
     auditTopic: "incident-audit"
   resources: {}
   livenessProbe:

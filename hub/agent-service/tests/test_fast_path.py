@@ -124,6 +124,20 @@ def test_deployment_remediation_actuation_source_hub_rollout():
     )
 
 
+@pytest.mark.parametrize("spoke_healed", [False, True])
+def test_oom_demo_after_hub_restart_still_scales_unless_spoke_healed(spoke_healed):
+    now = datetime.now(timezone.utc).isoformat()
+    annotations = {ROLLOUT_RESTART_ANNOTATION: now}
+    if spoke_healed:
+        annotations[FAST_PATH_LAST_HEAL_ANNOTATION] = now
+    actuation = deployment_remediation_actuation_source(
+        annotations,
+        cooldown_seconds=300,
+        raw_event='{"labels":{"dark_noc_scenario":"oom"}}',
+    )
+    assert actuation == ("spoke" if spoke_healed else None)
+
+
 @pytest.mark.asyncio
 async def test_spoke_fast_path_recent_true_when_rollout_restart_fresh():
     now = datetime.now(timezone.utc).isoformat()

@@ -45,6 +45,12 @@ spec:
               value: {{ .Values.chatbotService.env.modelApiUrl | quote }}
             - name: MODEL_NAME
               value: {{ .Values.chatbotService.env.modelName | quote }}
+            - name: EDGE_NAMESPACE
+              value: {{ .Values.topology.edgeNamespace | quote }}
+            - name: EDGE_SITE_ID
+              value: {{ .Values.chatbotService.env.edgeSiteId | quote }}
+            - name: DEMO_WORKLOAD
+              value: {{ .Values.chatbotService.env.demoWorkload | quote }}
             - name: DEMO_TOPIC
               value: {{ .Values.chatbotService.env.demoTopic | quote }}
             - name: AUDIT_TOPIC
