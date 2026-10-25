@@ -25,6 +25,16 @@ CLUSTER_COUNT      ?= 1
 SPOKE_NAME_PREFIX  ?= edge-site
 ACM_HUB_CLUSTER    ?= local-cluster
 CLUSTER_CREATE     ?= false
+ENABLE_CPU_DEMO    ?= false
+CPU_DEMO_REGISTRY  ?= $(EDGE_REGISTRY)
+CPU_DEMO_VERSION   ?= $(VERSION)
+ifeq ($(CLUSTER_COUNT),1)
+  CPU_DEMO_SITE_A ?= $(EDGE_SITE_ID)
+  CPU_DEMO_SITE_B ?= $(CPU_DEMO_SITE_A)
+else
+  CPU_DEMO_SITE_A ?= $(SPOKE_NAME_PREFIX)-01
+  CPU_DEMO_SITE_B ?= $(SPOKE_NAME_PREFIX)-02
+endif
 GITOPS_REPO_URL    ?= https://github.com/rh-ai-quickstart/ai-driven-network-remediation.git
 GITOPS_REVISION    ?= main
 SKIP_OC_CHECK      ?=
@@ -399,6 +409,15 @@ render-spokes:
 	SPOKE_NAME_PREFIX='$(SPOKE_NAME_PREFIX)' \
 	python3 scripts/topology/render-spokes.py -o '$(SPOKES_GENERATED)'
 
+CPU_DEMO_TARGETS := cpu-demo-build-images cpu-demo-push-images cpu-demo-deploy cpu-demo-undeploy
+.PHONY: $(CPU_DEMO_TARGETS)
+$(CPU_DEMO_TARGETS):
+	$(MAKE) -C e2e-showcase/cpu-misconfiguration $(patsubst cpu-demo-%,%,$@) \
+		RELEASE=cpu-misconfiguration CLUSTER_COUNT='$(CLUSTER_COUNT)' \
+		EDGE_NAMESPACE='$(EDGE_NAMESPACE)' REGISTRY='$(CPU_DEMO_REGISTRY)' \
+		VERSION='$(CPU_DEMO_VERSION)' SITE_A='$(CPU_DEMO_SITE_A)' SITE_B='$(CPU_DEMO_SITE_B)' \
+		CONTAINER_TOOL='$(CONTAINER_TOOL)' ARCH='$(ARCH)' PUSH_EXTRA_ARGS='$(PUSH_EXTRA_ARGS)'
+
 .PHONY: generate-fixtures
 generate-fixtures:
 	uv run --no-project --with datasets scripts/generate_fixtures.py
@@ -632,11 +651,25 @@ endif
 	$(MAKE) argocd-wait-spokes
 	@echo "OK: deploy hub-spoke complete ($(SPOKE_COUNT) spokes)"
 endif
+ifeq ($(ENABLE_CPU_DEMO),true)
+	$(MAKE) cpu-demo-deploy
+endif
 
 .PHONY: teardown
 teardown: validate-topology
 	@# Always invoke the script: it refuses CLUSTER_COUNT=1 when hub-spoke leftovers exist.
 	@echo "=== teardown (CLUSTER_COUNT=$(CLUSTER_COUNT)) ==="
+ifeq ($(ENABLE_CPU_DEMO),true)
+ifneq ($(filter --dry-run,$(ACM_TEARDOWN_ARGS)),)
+	@echo "SKIP: cpu-demo-undeploy (ACM_TEARDOWN_ARGS includes --dry-run)"
+else
+ifneq ($(filter true TRUE yes YES 1,$(SKIP_OC_CHECK)),)
+	@echo "SKIP: cpu-demo-undeploy (SKIP_OC_CHECK set)"
+else
+	$(MAKE) cpu-demo-undeploy
+endif
+endif
+endif
 	CLUSTER_COUNT='$(CLUSTER_COUNT)' \
 	CLUSTER_CREATE='$(CLUSTER_CREATE)' \
 	SPOKES_GENERATED='$(SPOKES_GENERATED)' \
