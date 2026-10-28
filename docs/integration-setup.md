@@ -102,18 +102,18 @@ Renew `RHACM_HUB_TOKEN` before its issued lifetime ends and redeploy to update t
 
 ## Integration endpoints
 
-Use the real-integration `HELM_EXTRA_ARGS` example in [.env.example](../.env.example). Keep all overrides in one assignment and replace endpoint placeholders before loading `.env`.
+Use the real-integration `AAP_URL` example in [.env.example](../.env.example) and replace the endpoint before loading `.env`.
 
 | Integration | Configuration behavior |
 | --- | --- |
-| Network AAP | Defaults to `http://aap.aap.svc`. Override `network.mcp-servers.mcp-servers.noc-aap.env.AAP_URL` for another address. |
-| RAN AAP | Set `telco.ranRemediationService.env.aapUrl` explicitly. |
+| Network AAP | Make sets `AAP_URL` to the namespace-local mock when enabled, or `http://aap.aap.svc` otherwise. |
+| RAN AAP | Uses the same Make `AAP_URL` value as Network. |
 | AAP namespace | `AAP_NAMESPACE` controls the prerequisite check and Lightspeed token lookup; it does not change controller URLs. The prerequisite check requires a controller Service named `aap` in that namespace. |
 | ServiceNow escalation | Set `ENABLE_SERVICENOW_MOCK=false` with `SERVICENOW_INSTANCE_URL` and `SERVICENOW_API_KEY` (preferred), or `SERVICENOW_USERNAME` + `SERVICENOW_PASSWORD` (Basic-auth fallback). `make helm-install` wires the `noc-servicenow` MCP server from these; no manual Helm overrides needed. |
 | ServiceNow dashboard URL | Set `network.chatbotService.env.servicenowUrl` to the instance URL. The current chart does not pass ServiceNow credentials to this backend, so authenticated incident counts are unavailable through the existing deployment configuration. |
 | Incident links | `SERVICENOW_INSTANCE_URL` sets the base URL for incident links. |
 
-The AAP controller API prefix defaults to `/api/controller/v2`. A standalone `AAP_URL` assignment is not forwarded by Make. `SERVICENOW_USERNAME` and `SERVICENOW_PASSWORD` provision the local bootstrap account and, when `ENABLE_SERVICENOW_MOCK=false`, serve as the Basic-auth fallback the Makefile forwards to the `noc-servicenow` MCP server. See the [ServiceNow setup guide](../scripts/servicenow-bootstrap/README.md) for account provisioning.
+`AAP_URL` is a Make variable shared by both services. Its default is the namespace-local mock when `ENABLE_AAP_MOCK=true` and `http://aap.aap.svc` otherwise. Set `AAP_URL` on the Make command line or in the environment to override both URLs. Direct Helm installs retain the chart defaults. The AAP controller API prefix defaults to `/api/controller/v2`. `SERVICENOW_USERNAME` and `SERVICENOW_PASSWORD` provision the local bootstrap account and, when `ENABLE_SERVICENOW_MOCK=false`, serve as the Basic-auth fallback the Makefile forwards to the `noc-servicenow` MCP server. See the [ServiceNow setup guide](../scripts/servicenow-bootstrap/README.md) for account provisioning.
 
 ## Operational inputs
 
