@@ -25,9 +25,7 @@ CLUSTER_COUNT      ?= 1
 SPOKE_NAME_PREFIX  ?= edge-site
 ACM_HUB_CLUSTER    ?= local-cluster
 CLUSTER_CREATE     ?= false
-ENABLE_CPU_DEMO    ?= false
-CPU_DEMO_REGISTRY  ?= $(EDGE_REGISTRY)
-CPU_DEMO_VERSION   ?= $(VERSION)
+ENABLE_CPU_DEMO    ?= $(if $(and $(filter true,$(ENABLE_LIGHTSPEED)),$(filter true,$(ENABLE_NETWORK_REMEDIATION))),true,false)
 ifeq ($(CLUSTER_COUNT),1)
   CPU_DEMO_SITE_A ?= $(EDGE_SITE_ID)
   CPU_DEMO_SITE_B ?= $(CPU_DEMO_SITE_A)
@@ -201,10 +199,13 @@ TELCO_IMAGES := \
 EDGE_IMAGES := \
 	$(EDGE_FAST_PATH_HEALER_IMG)
 
+CPU_DEMO_IMAGES := $(addprefix $(REGISTRY)/,showcase-client:$(VERSION) showcase-microservice-a:$(VERSION) showcase-microservice-b:$(VERSION))
+
 CORE_BUILD_PUSH_IMAGES := \
 	$(SHARED_IMAGES) \
 	$(if $(filter true,$(ENABLE_NETWORK_REMEDIATION)),$(MCP_IMAGES) $(NETWORK_IMAGES) $(EDGE_IMAGES)) \
-	$(if $(filter true,$(ENABLE_TELCO_ORAN)),$(TELCO_IMAGES))
+	$(if $(filter true,$(ENABLE_TELCO_ORAN)),$(TELCO_IMAGES)) \
+	$(if $(filter true,$(ENABLE_CPU_DEMO)),$(CPU_DEMO_IMAGES))
 
 EXTRA_BUILD_PUSH_IMAGES := \
 	$(AAP_MOCK_IMG) \
@@ -412,14 +413,17 @@ render-spokes:
 	SPOKE_NAME_PREFIX='$(SPOKE_NAME_PREFIX)' \
 	python3 scripts/topology/render-spokes.py -o '$(SPOKES_GENERATED)'
 
-CPU_DEMO_TARGETS := cpu-demo-build-images cpu-demo-push-images cpu-demo-deploy cpu-demo-undeploy
+CPU_DEMO_TARGETS := cpu-demo-build-images cpu-demo-push-images cpu-demo-deploy cpu-demo-undeploy cpu-demo-reset
 .PHONY: $(CPU_DEMO_TARGETS)
 $(CPU_DEMO_TARGETS):
 	$(MAKE) -C e2e-showcase/cpu-misconfiguration $(patsubst cpu-demo-%,%,$@) \
 		RELEASE=cpu-misconfiguration CLUSTER_COUNT='$(CLUSTER_COUNT)' \
-		EDGE_NAMESPACE='$(EDGE_NAMESPACE)' REGISTRY='$(CPU_DEMO_REGISTRY)' \
-		VERSION='$(CPU_DEMO_VERSION)' SITE_A='$(CPU_DEMO_SITE_A)' SITE_B='$(CPU_DEMO_SITE_B)' \
+		EDGE_NAMESPACE='$(EDGE_NAMESPACE)' REGISTRY='$(REGISTRY)' \
+		VERSION='$(VERSION)' SITE_A='$(CPU_DEMO_SITE_A)' SITE_B='$(CPU_DEMO_SITE_B)' \
 		CONTAINER_TOOL='$(CONTAINER_TOOL)' ARCH='$(ARCH)' PUSH_EXTRA_ARGS='$(PUSH_EXTRA_ARGS)'
+
+.PHONY: cpu-demo-deploy-enabled
+cpu-demo-deploy-enabled: $(if $(filter true,$(ENABLE_CPU_DEMO)),cpu-demo-deploy)
 
 .PHONY: generate-fixtures
 generate-fixtures:
@@ -834,7 +838,8 @@ edge-rbac-teardown:
 .PHONY: build-all-images
 build-all-images: build-ingestion-image \
 	$(if $(filter true,$(ENABLE_NETWORK_REMEDIATION)),build-mcp-images build-chatbot-image build-agent-image build-frontend-image build-edge-fast-path-healer-image) \
-	$(if $(filter true,$(ENABLE_TELCO_ORAN)),build-ran-anomaly-image build-ran-rca-image build-ran-chatbot-image build-ran-frontend-image build-ran-remediation-image)
+	$(if $(filter true,$(ENABLE_TELCO_ORAN)),build-ran-anomaly-image build-ran-rca-image build-ran-chatbot-image build-ran-frontend-image build-ran-remediation-image) \
+	$(if $(filter true,$(ENABLE_CPU_DEMO)),cpu-demo-build-images)
 
 .PHONY: build-ingestion-image
 build-ingestion-image:

@@ -12,6 +12,8 @@ EDGE_NAMESPACE="${EDGE_NAMESPACE:-dark-noc-edge}"
 SITE_A="${SITE_A:-edge-site-01}"
 SITE_B="${SITE_B:-edge-site-02}"
 RELEASE="${RELEASE:-cpu-misconfiguration}"
+FAULT_CPU_REQUEST="20m"
+FAULT_CPU_LIMIT="25m"
 KUBECONFIG_A=""
 KUBECONFIG_B=""
 
@@ -85,6 +87,19 @@ undeploy_multi_cluster() {
   helm uninstall "$RELEASE" --kubeconfig "$KUBECONFIG_A" --namespace "$EDGE_NAMESPACE" --ignore-not-found
 }
 
+reset_demo() {
+  local -a context_args=()
+  if (( CLUSTER_COUNT >= 2 )); then
+    KUBECONFIG_B="$(mktemp)"
+    trap cleanup EXIT
+    fetch_site_kubeconfig "$SITE_B" "$KUBECONFIG_B"
+    context_args=(--kubeconfig "$KUBECONFIG_B")
+  fi
+  oc "${context_args[@]}" set resources deployment/microservice-b -n "$EDGE_NAMESPACE" \
+    --containers=microservice-b --requests="cpu=$FAULT_CPU_REQUEST" --limits="cpu=$FAULT_CPU_LIMIT"
+  oc "${context_args[@]}" rollout status deployment/microservice-b -n "$EDGE_NAMESPACE" --timeout=5m
+}
+
 if ! [[ "$CLUSTER_COUNT" =~ ^[0-9]+$ ]]; then
   echo "CLUSTER_COUNT must be an integer >= 1" >&2
   exit 2
@@ -94,8 +109,8 @@ if (( CLUSTER_COUNT < 1 )); then
   echo "CLUSTER_COUNT must be an integer >= 1" >&2
   exit 2
 fi
-if [[ "$ACTION" != deploy && "$ACTION" != undeploy ]]; then
-  echo "Usage: $0 [deploy|undeploy]" >&2
+if [[ "$ACTION" != deploy && "$ACTION" != undeploy && "$ACTION" != reset ]]; then
+  echo "Usage: $0 [deploy|undeploy|reset]" >&2
   exit 2
 fi
 if [[ "$ACTION" == deploy && -z "$REGISTRY" ]]; then
@@ -105,6 +120,11 @@ fi
 if (( CLUSTER_COUNT >= 2 )) && [[ "$SITE_A" == "$SITE_B" ]]; then
   echo "SITE_A and SITE_B must differ for a multi-cluster deployment" >&2
   exit 2
+fi
+
+if [[ "$ACTION" == reset ]]; then
+  reset_demo
+  exit 0
 fi
 
 if (( CLUSTER_COUNT == 1 )); then

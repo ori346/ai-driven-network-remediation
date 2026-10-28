@@ -14,7 +14,7 @@ CLIENT_IMAGE         := $(REGISTRY)/showcase-client:$(VERSION)
 MICROSERVICE_A_IMAGE := $(REGISTRY)/showcase-microservice-a:$(VERSION)
 MICROSERVICE_B_IMAGE := $(REGISTRY)/showcase-microservice-b:$(VERSION)
 
-.PHONY: check-registry build-images push-images deploy undeploy
+.PHONY: check-registry build-images push-images deploy undeploy reset
 
 check-registry:
 	@test -n "$(REGISTRY)" || { echo "Set REGISTRY to the image registry you use" >&2; exit 1; }
@@ -34,3 +34,6 @@ deploy:
 
 undeploy:
 	REGISTRY="$(REGISTRY)" VERSION="$(VERSION)" CLUSTER_COUNT="$(CLUSTER_COUNT)" EDGE_NAMESPACE="$(EDGE_NAMESPACE)" SITE_A="$(SITE_A)" SITE_B="$(SITE_B)" RELEASE="$(RELEASE)" ./deploy.sh undeploy
+
+reset:
+	CLUSTER_COUNT="$(CLUSTER_COUNT)" EDGE_NAMESPACE="$(EDGE_NAMESPACE)" SITE_A="$(SITE_A)" SITE_B="$(SITE_B)" RELEASE="$(RELEASE)" ./deploy.sh reset

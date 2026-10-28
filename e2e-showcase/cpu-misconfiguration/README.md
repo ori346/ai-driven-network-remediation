@@ -10,27 +10,32 @@ Choose a registry you can push to, then use the same registry and version for
 deployment. From the repository root, build and push with:
 
 ```bash
-make cpu-demo-build-images CPU_DEMO_REGISTRY=registry.example/team
-make cpu-demo-push-images CPU_DEMO_REGISTRY=registry.example/team
+make cpu-demo-build-images REGISTRY=registry.example/team
+make cpu-demo-push-images REGISTRY=registry.example/team
 ```
 
-`CPU_DEMO_REGISTRY` defaults to `EDGE_REGISTRY`; `CPU_DEMO_VERSION` defaults to
-`VERSION`.
+The demo uses the root `REGISTRY` and `VERSION` settings. When enabled, its
+images are included in `make build-all-images` and `make push-all-images`.
 
 ## Deploy
 
 The root deployment can install the demo after the normal hub and edge
-deployment. It uses the same `CLUSTER_COUNT` mode as the rest of the stack:
+deployment. It defaults to enabled when both `ENABLE_LIGHTSPEED=true` and
+`ENABLE_NETWORK_REMEDIATION=true`; set `ENABLE_CPU_DEMO=false` to opt out.
+It uses the same `CLUSTER_COUNT` mode as the rest of the stack:
 
 ```bash
-make deploy ENABLE_CPU_DEMO=true CPU_DEMO_REGISTRY=registry.example/team
+make deploy ENABLE_CPU_DEMO=true REGISTRY=registry.example/team
 ```
 
-If the stack is already deployed, install or reset only the demo workloads with
+The local `scripts/local/deploy-network.sh` path also installs the workloads
+when enabled, after deploying the edge chart.
+
+If the stack is already deployed, install only the demo workloads with
 the root wrapper, using the same topology mode as the stack:
 
 ```bash
-make cpu-demo-deploy CLUSTER_COUNT=1 CPU_DEMO_REGISTRY=registry.example/team
+make cpu-demo-deploy CLUSTER_COUNT=1 REGISTRY=registry.example/team
 ```
 
 With `CLUSTER_COUNT=1`, all components use the current kubeconfig and the demo
@@ -42,11 +47,11 @@ run on SITE_B. Override either default with `CPU_DEMO_SITE_A` or
 
 ```bash
 make deploy CLUSTER_COUNT=2 ENABLE_CPU_DEMO=true \
-  CPU_DEMO_REGISTRY=registry.example/team
+  REGISTRY=registry.example/team
 ```
 
 To install the demo on an already deployed multi-cluster stack, use
-`make cpu-demo-deploy CLUSTER_COUNT=2 CPU_DEMO_REGISTRY=registry.example/team`.
+`make cpu-demo-deploy CLUSTER_COUNT=2 REGISTRY=registry.example/team`.
 
 When enabled, root deployment passes the effective demo site IDs to the chatbot
 configuration. If overriding `CPU_DEMO_SITE_A` or `CPU_DEMO_SITE_B`, use those
@@ -55,9 +60,12 @@ the demo sites.
 
 Click **Trigger CPU Misconfiguration Demo** in the UI to publish the alert. That
 button only publishes an alert; it does not deploy or reset the workloads. This
-demo does not run the LLM judge. After remediation, reset microservice B's CPU
-limit to 25m with `make cpu-demo-deploy`,
-passing the same topology and registry settings used for deployment.
+demo does not run the LLM judge. Wait for remediation to finish, then run
+`make cpu-demo-reset CLUSTER_COUNT=1` to restore only microservice B's CPU
+request (20m) and limit (25m), and wait for its rollout. Use `CLUSTER_COUNT=2`
+(or your deployed count) from the hub for multiple clusters, with the same
+site and namespace overrides used for deployment. Reset preserves the release,
+images, and incident history; it does not require registry settings.
 
 ## Remove
 

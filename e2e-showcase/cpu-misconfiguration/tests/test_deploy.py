@@ -40,6 +40,7 @@ if [[ "${1:-}" == "get" && "${2:-}" == "secret" ]]; then
   printf '%s' "$config"
   exit 0
 fi
+if [[ "${1:-}" == "set" || "${1:-}" == "rollout" ]]; then exit "${MOCK_RESET_EXIT:-0}"; fi
 if [[ "${1:-}" == "get" && "${2:-}" == "route" ]]; then
   printf 'microservice-b.apps.example.test'
   exit 0
@@ -68,7 +69,7 @@ done
         path.write_text(contents, encoding="utf-8")
         path.chmod(0o755)
 
-    def _run_deploy(self, **overrides):
+    def _run_deploy(self, action="deploy", **overrides):
         environment = os.environ.copy()
         environment.update(
             PATH=f"{self.bin_dir}{os.pathsep}{environment['PATH']}",
@@ -81,7 +82,7 @@ done
         )
         environment.update(overrides)
         return subprocess.run(
-            ["bash", str(DEPLOY_SCRIPT), "deploy"],
+            ["bash", str(DEPLOY_SCRIPT), action],
             check=False,
             capture_output=True,
             text=True,
@@ -143,6 +144,33 @@ done
         self.assertIn("Could not read spoke kubeconfig for 'edge-site-02'", completed.stderr)
         self.assertNotIn("helm upgrade --install", self.command_log.read_text(encoding="utf-8"))
         self.assertEqual(list(self.kubeconfig_dir.iterdir()), [])
+
+    def test_reset_single_cluster_only_restores_cpu_fault(self):
+        completed = self._run_deploy(action="reset", CLUSTER_COUNT="1", REGISTRY="")
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        command_log = self.command_log.read_text()
+        self.assertIn("set resources deployment/microservice-b", command_log)
+        self.assertIn("--requests=cpu=20m --limits=cpu=25m", command_log)
+        self.assertIn("rollout status deployment/microservice-b", command_log)
+        self.assertNotIn("helm", command_log)
+        self.assertNotIn("get secret", command_log)
+
+    def test_reset_multi_cluster_only_uses_site_b_and_cleans_credentials(self):
+        completed = self._run_deploy(
+            action="reset", CLUSTER_COUNT="2", MOCK_SITE_B_ADMIN=self._encoded("site-b-config")
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        command_log = self.command_log.read_text()
+        self.assertIn("get secret edge-site-02-admin-kubeconfig", command_log)
+        self.assertNotIn("edge-site-01", command_log)
+        self.assertIn("--kubeconfig", command_log)
+        self.assertIn("set resources deployment/microservice-b", command_log)
+        self.assertEqual(list(self.kubeconfig_dir.iterdir()), [])
+
+    def test_reset_patch_failure_stops_before_rollout(self):
+        completed = self._run_deploy(action="reset", CLUSTER_COUNT="1", MOCK_RESET_EXIT="1")
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertNotIn("rollout status", self.command_log.read_text())
 
 
 if __name__ == "__main__":
